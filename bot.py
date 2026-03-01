@@ -1,9 +1,15 @@
 """
-CosmicBotz — Pyrofork Client + aiohttp health server
-The web server runs on Render's injected $PORT so the service
-stays alive and health-checks pass.
+CosmicBotz — Pyrogram Client + aiohttp health server
 """
+import os
+import sys
 import logging
+
+# ── MUST be first — set working dir before Pyrogram loads plugins ─────────────
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# ─────────────────────────────────────────────────────────────────────────────
+
 from aiohttp import web
 from pyrogram import Client
 import config as cfg
@@ -27,10 +33,8 @@ async def health_handler(request):
 async def web_server():
     app = web.Application(client_max_size=30_000_000)
     app.add_routes(CosmicBotz_Web)
-
     runner = web.AppRunner(app)
     await runner.setup()
-
     site = web.TCPSite(runner, host="0.0.0.0", port=cfg.PORT)
     await site.start()
     logger.info(f"🌐 Web server running on port {cfg.PORT}")
@@ -53,7 +57,6 @@ class CosmicBotzClient(Client):
         await super().start()
         me = await self.get_me()
         logger.info(f"✅ CosmicBotz started as @{me.username}")
-        # 🔹 Start Web Server (Render PORT keep-alive)
         await web_server()
 
     async def stop(self):
