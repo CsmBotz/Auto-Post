@@ -1,14 +1,12 @@
 services:
-  - type: web
+  - type: worker          # worker = no HTTP port needed â€” perfect for bots
     name: cosmicbotz
     runtime: docker
     dockerfilePath: ./Dockerfile
     dockerContext: .
-    plan: free
+    plan: starter
     autoDeploy: true
     branch: main
-    healthCheckPath: /health
-
     envVars:
       - key: API_ID
         sync: false
@@ -19,8 +17,6 @@ services:
       - key: ADMIN_IDS
         sync: false
       - key: MONGO_URI
-        sync: false
-      - key: BOT_USERNAME
         sync: false
       - key: TMDB_API_KEY
         sync: false
