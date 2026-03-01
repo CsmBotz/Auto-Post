@@ -5,14 +5,21 @@ import os
 import sys
 import logging
 
-# ── MUST be first — set working dir before Pyrogram loads plugins ─────────────
+# Set working directory to project root
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-# ─────────────────────────────────────────────────────────────────────────────
 
 from aiohttp import web
 from pyrogram import Client
 import config as cfg
+
+# ── Manually import all plugins so handlers register ─────────────────────────
+import Plugins.start
+import Plugins.content
+import Plugins.settings
+import Plugins.templates
+import Plugins.admin
+# ─────────────────────────────────────────────────────────────────────────────
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +56,6 @@ class CosmicBotzClient(Client):
             api_hash=cfg.API_HASH,
             bot_token=cfg.BOT_TOKEN,
             workers=200,
-            plugins={"root": "Plugins"},
             sleep_threshold=15,
         )
 
