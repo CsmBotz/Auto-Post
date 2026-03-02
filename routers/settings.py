@@ -9,14 +9,6 @@ import config as cfg
 
 router = Router()
 
-_ALL_CMDS = [
-    "start", "help", "movie", "tvshow", "anime", "manhwa",
-    "settings", "setwatermark", "setchannel", "stats",
-    "setformat", "myformat", "templates",
-    "admin", "broadcast", "ban", "unban",
-    "addpremium", "revokepremium", "userinfo", "globalstats",
-]
-
 
 def settings_kb():
     kb = InlineKeyboardBuilder()
@@ -49,9 +41,11 @@ def audio_kb():
     return kb.as_markup()
 
 
-async def _send_settings(user_id: int, target):
-    s    = await CosmicBotz.get_user_settings(user_id)
-    user = await CosmicBotz.get_user(user_id)
+async def _show_settings(uid: int, target):
+    """Works for both Message and CallbackQuery message."""
+    await CosmicBotz.upsert_user(uid, "", "")
+    s    = await CosmicBotz.get_user_settings(uid)
+    user = await CosmicBotz.get_user(uid)
     plan = "⭐ Premium" if user and user.get("is_premium") else "Free"
     text = (
         f"⚙️ <b>Settings</b>  <code>[{plan}]</code>\n\n"
@@ -64,12 +58,15 @@ async def _send_settings(user_id: int, target):
     if isinstance(target, Message):
         await target.answer(text, reply_markup=settings_kb())
     else:
-        await target.edit_text(text, reply_markup=settings_kb())
+        try:
+            await target.edit_text(text, reply_markup=settings_kb())
+        except Exception:
+            await target.answer(text, reply_markup=settings_kb())
 
 
 @router.message(Command("settings"))
 async def cmd_settings(message: Message):
-    await _send_settings(message.from_user.id, message)
+    await _show_settings(message.from_user.id, message)
 
 
 @router.message(Command("setwatermark"))
@@ -87,9 +84,9 @@ async def cmd_setchannel(message: Message):
     await fsm.set(message.from_user.id, {"step": "cfg_channel"})
     await message.answer(
         "📺 <b>Set Channel</b>\n\n"
-        "Send your channel username or ID.\n"
+        "Send your channel username or numeric ID.\n"
         "Example: <code>@MyAnimeChannel</code>\n\n"
-        "⚠️ Make sure this bot is <b>admin</b> in your channel first!"
+        "⚠️ Make sure the bot is <b>admin</b> in your channel first!"
     )
 
 
@@ -100,101 +97,63 @@ async def cfg_callback(cb: CallbackQuery):
     data = cb.data
 
     if data == "cfg_open":
-        await _send_settings(uid, cb.message)
+        await _show_settings(uid, cb.message)
+
     elif data == "cfg_watermark":
         await fsm.set(uid, {"step": "cfg_watermark"})
         await cb.message.edit_text(
-            "🖋 <b>Set Watermark</b>\n\nSend watermark text or <code>clear</code> to remove."
+            "🖋 <b>Set Watermark</b>\n\nSend your watermark text or <code>clear</code> to remove."
         )
+
     elif data == "cfg_channel":
         await fsm.set(uid, {"step": "cfg_channel"})
         await cb.message.edit_text(
-            "📺 <b>Set Channel</b>\n\nSend <code>@channel</code> or numeric ID.\n⚠️ Bot must be admin!"
+            "📺 <b>Set Channel</b>\n\nSend <code>@channel</code> or numeric ID.\n"
+            "⚠️ Bot must be admin in the channel!"
         )
+
     elif data == "cfg_quality":
         await cb.message.edit_text("🎞 <b>Select Default Quality:</b>", reply_markup=quality_kb())
+
     elif data == "cfg_audio":
         await cb.message.edit_text("🔊 <b>Select Default Audio:</b>", reply_markup=audio_kb())
+
     elif data.startswith("cfg_setquality|"):
         val = data.split("|", 1)[1]
         await CosmicBotz.update_user_settings(uid, {"quality": val})
-        await cb.answer("✅ Quality set!", show_alert=True)
-        await _send_settings(uid, cb.message)
+        await cb.answer("✅ Quality updated!", show_alert=True)
+        await _show_settings(uid, cb.message)
+
     elif data.startswith("cfg_setaudio|"):
         val = data.split("|", 1)[1]
         await CosmicBotz.update_user_settings(uid, {"audio": val})
-        await cb.answer("✅ Audio set!", show_alert=True)
-        await _send_settings(uid, cb.message)
+        await cb.answer("✅ Audio updated!", show_alert=True)
+        await _show_settings(uid, cb.message)
+
     elif data == "cfg_templates":
         from routers.templates import show_templates
         await show_templates(uid, cb.message)
+
     elif data == "cfg_stats":
         user  = await CosmicBotz.get_user(uid)
         posts = user.get("post_count", 0) if user else 0
         plan  = "⭐ Premium" if user and user.get("is_premium") else "Free"
-        kb = InlineKeyboardBuilder()
+        kb    = InlineKeyboardBuilder()
         kb.button(text="🔙 Back", callback_data="cfg_back")
         await cb.message.edit_text(
             f"📊 <b>My Stats</b>\n\nTotal Posts: <b>{posts}</b>\nPlan: <b>{plan}</b>",
             reply_markup=kb.as_markup(),
         )
-    elif data == "cfg_back":
-        await _send_settings(uid, cb.message)
+
+    elif data in ("cfg_back", "cfg_open"):
+        await _show_settings(uid, cb.message)
+
     elif data == "cfg_close":
-        await cb.message.delete()
+        try:
+            await cb.message.delete()
+        except Exception:
+            pass
 
-
-@router.message(F.text & ~F.text.startswith("/"))
-async def handle_text(message: Message):
-    uid   = message.from_user.id
-    state = await fsm.get(uid)
-    if not state:
-        return
-    step = state.get("step", "")
-    text = message.text.strip()
-
-    if step == "cfg_watermark":
-        if text.lower() == "clear":
-            await CosmicBotz.update_user_settings(uid, {"watermark": ""})
-            await message.answer("✅ Watermark cleared.")
-        else:
-            await CosmicBotz.update_user_settings(uid, {"watermark": text})
-            await message.answer(f"✅ Watermark set to <code>{text}</code>")
-        await fsm.clear(uid)
-
-    elif step == "cfg_channel":
-        if not (text.startswith("@") or text.lstrip("-").isdigit()):
-            await message.answer("❌ Use <code>@channel</code> format or a numeric chat ID.")
-            return
-        await CosmicBotz.update_user_settings(uid, {"channel_id": text})
-        await message.answer(f"✅ Channel linked: <code>{text}</code>\nMake sure the bot is admin there!")
-        await fsm.clear(uid)
-
-    elif step == "tpl_name":
-        if " " in text or len(text) > 32:
-            await message.answer("❌ Name must be ≤ 32 chars with no spaces. Try again:")
-            return
-        await fsm.update(uid, {"step": "tpl_body", "tpl_name": text})
-        await message.answer(
-            f"✅ Name: <b>{text}</b>\n\n"
-            "Now send the <b>template body</b>.\n"
-            "Use tokens like <code>{title}</code>, <code>{imdb_rating}</code> etc.\n"
-            "Must include <code>{title}</code>."
-        )
-
-    elif step == "tpl_body":
-        if "{title}" not in text:
-            await message.answer("⚠️ Template must contain <code>{title}</code>. Try again:")
-            return
-        name = state.get("tpl_name", "unnamed")
-        await CosmicBotz.save_template(uid, name, text)
-        await CosmicBotz.update_user_settings(uid, {"active_template": name})
-        await fsm.clear(uid)
-        await message.answer(
-            f"✅ <b>Template '{name}' saved and activated!</b>\n"
-            "Use /templates to manage all your templates."
-        )
-
-    elif step == "adm_broadcast":
-        from routers.admin import do_broadcast
-        await do_broadcast(message, text)
+# ── IMPORTANT: NO F.text handler here ─────────────────────────────────────────
+# All text input (watermark, channel, template name/body, button name/url)
+# is handled ONLY in content.py handle_text_input to avoid double-firing.
