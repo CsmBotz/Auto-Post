@@ -1,10 +1,8 @@
-from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 import config as cfg
 
 
 def extract_query(text: str) -> str:
-    """Extract search query from command text."""
     parts = text.split(None, 1)
     return parts[1].strip() if len(parts) > 1 else ""
 
@@ -29,12 +27,13 @@ def thumbnail_kb(prefix: str):
 
 def preview_kb(prefix: str):
     kb = InlineKeyboardBuilder()
-    kb.button(text="📤 Post to Channel",   callback_data=f"{prefix}_post_channel")
-    kb.button(text="📋 Copy Caption",      callback_data=f"{prefix}_post_copy")
-    kb.button(text="🖼 Change Thumbnail",  callback_data=f"{prefix}_redo_thumb")
-    kb.button(text="📄 Change Template",   callback_data=f"{prefix}_change_tpl")
-    kb.button(text="❌ Cancel",             callback_data=f"{prefix}_cancel")
-    kb.adjust(2, 2, 1)
+    kb.button(text="📤 Post to Channel",  callback_data=f"{prefix}_post_channel")
+    kb.button(text="📋 Copy Caption",     callback_data=f"{prefix}_post_copy")
+    kb.button(text="🔗 Add Buttons",      callback_data=f"{prefix}_btn_start")
+    kb.button(text="🖼 Change Thumbnail", callback_data=f"{prefix}_redo_thumb")
+    kb.button(text="📄 Change Template",  callback_data=f"{prefix}_change_tpl")
+    kb.button(text="❌ Cancel",            callback_data=f"{prefix}_cancel")
+    kb.adjust(2, 1, 2, 1)
     return kb.as_markup()
 
 
@@ -48,38 +47,23 @@ def template_kb(templates: list, prefix: str):
     return kb.as_markup()
 
 
-async def post_to_channel(bot, channel_id: str, thumb: bytes, caption: str) -> bool:
-    from aiogram.types import BufferedInputFile
-    try:
-        photo = BufferedInputFile(thumb, filename="thumb.jpg")
-        await bot.send_photo(chat_id=channel_id, photo=photo, caption=caption)
-        return True
-    except Exception:
-        return False
+def add_button_start_kb(prefix: str):
+    """Shown when no buttons added yet."""
+    kb = InlineKeyboardBuilder()
+    kb.button(text="➕ Add Button",  callback_data=f"{prefix}_btn_add")
+    kb.button(text="✅ Post Now",    callback_data=f"{prefix}_post_direct")
+    kb.button(text="🔙 Back",        callback_data=f"{prefix}_back_preview")
+    kb.adjust(1)
+    return kb.as_markup()
 
 
-# ── New button-related keyboards ───────────────────────────────────────
-
-def ask_add_buttons_kb(prefix: str) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.button(text="Add button(s)", callback_data=f"{prefix}_add_buttons")
-    builder.button(text="Skip → Post",   callback_data=f"{prefix}_post_no_buttons")
-    builder.adjust(2)
-    return builder.as_markup()
-
-
-def finish_adding_kb(prefix: str) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.button(text="Finish & Preview", callback_data=f"{prefix}_finish_buttons")
-    builder.button(text="Cancel",           callback_data=f"{prefix}_cancel")
-    builder.adjust(2)
-    return builder.as_markup()
-
-
-def confirm_post_with_buttons_kb(prefix: str) -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Post Now",      callback_data=f"{prefix}_confirm_post_buttons")
-    builder.button(text="✏️ Edit / Add more", callback_data=f"{prefix}_add_buttons")
-    builder.button(text="❌ Cancel",         callback_data=f"{prefix}_cancel")
-    builder.adjust(1, 2)
-    return builder.as_markup()
+def button_manage_kb(prefix: str, buttons: list):
+    """Shown after at least one button is added."""
+    kb = InlineKeyboardBuilder()
+    for i, btn in enumerate(buttons):
+        kb.button(text=f"🗑 {btn['text']}", callback_data=f"{prefix}_btn_del_{i}")
+    kb.button(text="➕ Add Another", callback_data=f"{prefix}_btn_add")
+    kb.button(text="✅ Post Now",    callback_data=f"{prefix}_btn_done")
+    kb.button(text="🔙 Back",        callback_data=f"{prefix}_back_preview")
+    kb.adjust(1)
+    return kb.as_markup()
