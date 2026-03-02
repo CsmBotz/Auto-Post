@@ -1,6 +1,6 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
+from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from database.db import CosmicBotz
@@ -9,7 +9,6 @@ router = Router()
 
 
 async def _ensure_user(message: Message):
-    """Save user to DB if not exists."""
     await CosmicBotz.upsert_user(
         message.from_user.id,
         message.from_user.username or "",
@@ -20,8 +19,8 @@ async def _ensure_user(message: Message):
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     await _ensure_user(message)
-    name = message.from_user.first_name
-    kb = InlineKeyboardBuilder()
+    name = message.from_user.first_name or "there"
+    kb   = InlineKeyboardBuilder()
     kb.button(text="🎬 Movie",    callback_data="eg_movie")
     kb.button(text="📺 TV Show",  callback_data="eg_tv")
     kb.button(text="🌸 Anime",    callback_data="eg_anime")
@@ -67,10 +66,11 @@ async def cmd_help(message: Message):
 async def cmd_stats(message: Message):
     await _ensure_user(message)
     user = await CosmicBotz.get_user(message.from_user.id)
-    plan = "⭐ Premium" if user.get("is_premium") else "Free"
+    plan = "⭐ Premium" if user and user.get("is_premium") else "Free"
+    posts = user.get("post_count", 0) if user else 0
     await message.answer(
         f"📊 <b>Your Stats</b>\n\n"
-        f"Total Posts: <b>{user.get('post_count', 0)}</b>\n"
+        f"Total Posts: <b>{posts}</b>\n"
         f"Account:     <b>{plan}</b>"
     )
 
