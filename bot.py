@@ -92,24 +92,14 @@ async def on_shutdown(bot: Bot):
 # Main
 # ─────────────────────────────────────────────
 def main():
-    dp.startup.register(on_startup)
-    dp.shutdown.register(on_shutdown)
-
     app = web.Application()
 
-    # Root route
     app.router.add_get("/", lambda r: web.Response(text="CosmicBotz Running!"))
-
-    # Health route (use this in Render health check)
     app.router.add_get("/health", lambda r: web.Response(text="OK"))
+    app.router.add_get(WEBHOOK_PATH, lambda r: web.Response(text="Webhook OK"))
 
-    # 👇 IMPORTANT: Allow GET on webhook to prevent 405 restart loop
-    app.router.add_get(WEBHOOK_PATH, lambda r: web.Response(text="Webhook Alive"))
-
-    # Telegram webhook handler (POST)
     SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=WEBHOOK_PATH)
-
-    setup_application(app, dp, bot=bot)
+    setup_application(app, dp, bot=bot, on_startup=[on_startup], on_shutdown=[on_shutdown])
 
     LOGGER.info(f"🌐 Starting on port {PORT}")
     web.run_app(app, host="0.0.0.0", port=PORT)
