@@ -9,7 +9,7 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler
 
 from config import BOT_TOKEN, ADMIN_IDS, PORT, WEBHOOK_URL
 from routers import get_all_routers
@@ -20,7 +20,7 @@ logging.basicConfig(
 )
 LOGGER = logging.getLogger(__name__)
 
-WEBHOOK_PATH = f"/webhook"
+WEBHOOK_PATH = "/webhook"
 
 bot = Bot(
     token=BOT_TOKEN,
@@ -28,40 +28,39 @@ bot = Bot(
 )
 dp = Dispatcher()
 
-# Register all routers immediately — not in startup hook
-for router in get_all_routers():
+# Register all routers at module level
+all_routers = get_all_routers()
+for router in all_routers:
     dp.include_router(router)
-LOGGER.info(f"✅ Loaded {len(get_all_routers())} routers")
+LOGGER.info(f"✅ Loaded {len(all_routers)} routers")
+
+
+async def on_startup(app):
+    webhook = f"{WEBHOOK_URL.rstrip('/')}{WEBHOOK_PATH}"
+    await bot.set_webhook(url=webhook, drop_pending_updates=True)
+    LOGGER.info(f"✅ Webhook set → {webhook}")
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(
+                chat_id=admin_id,
+                text="<b><blockquote>🤖 CosmicBotz Started ✅</blockquote></b>",
+            )
+        except Exception as e:
+            LOGGER.warning(f"Could not notify admin {admin_id}: {e}")
+
+
+async def on_shutdown(app):
+    LOGGER.info("⛔ Bot stopped.")
 
 
 def main():
     app = web.Application()
 
-    # Health endpoints
     app.router.add_get("/", lambda r: web.Response(text="CosmicBotz Running!"))
     app.router.add_get("/health", lambda r: web.Response(text="OK"))
 
-    # Webhook handler
+    # Register webhook handler — NO setup_application
     SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=WEBHOOK_PATH)
-    setup_application(app, dp, bot=bot)
-
-    # Set webhook URL for Telegram
-    async def on_startup(app):
-        webhook = f"{WEBHOOK_URL.rstrip('/')}{WEBHOOK_PATH}"
-        await bot.set_webhook(url=webhook, drop_pending_updates=True)
-        LOGGER.info(f"✅ Webhook set → {webhook}")
-        for admin_id in ADMIN_IDS:
-            try:
-                await bot.send_message(
-                    chat_id=admin_id,
-                    text="<b><blockquote>🤖 CosmicBotz Started ✅</blockquote></b>",
-                )
-            except Exception as e:
-                LOGGER.warning(f"Could not notify admin {admin_id}: {e}")
-
-    async def on_shutdown(app):
-        await bot.delete_webhook()
-        LOGGER.info("⛔ Bot stopped.")
 
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
