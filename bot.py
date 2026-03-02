@@ -61,6 +61,8 @@ LOGGER.info(f"✅ Loaded {len(all_routers)} routers")
 # ─────────────────────────────────────────────
 # Startup
 # ─────────────────────────────────────────────
+LOGGER.info(f"DEBUG → WEBHOOK_URL = {WEBHOOK_URL}")
+
 async def on_startup(bot: Bot):
     webhook = f"{WEBHOOK_URL.rstrip('/')}{WEBHOOK_PATH}"
     await bot.set_webhook(url=webhook, drop_pending_updates=True)
