@@ -6,6 +6,8 @@ from routers.admin import router as admin_router
 
 
 def get_all_routers():
+    # ORDER MATTERS: content must be before settings/templates
+    # so the single F.text handler in content.py fires first
     return [
         start_router,
         content_router,
