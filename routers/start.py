@@ -1,4 +1,4 @@
-from aiogram import Router, filters
+from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -66,7 +66,7 @@ async def cmd_stats(message: Message):
     )
 
 
-@router.callback_query(filters.F.data.startswith("eg_"))
+@router.callback_query(F.data.startswith("eg_"))
 async def cb_example(cb: CallbackQuery):
     tips = {
         "eg_movie":  "Try: /movie Interstellar",
