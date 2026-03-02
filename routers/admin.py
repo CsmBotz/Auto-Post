@@ -1,3 +1,5 @@
+import asyncio
+import logging
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
@@ -7,20 +9,21 @@ from database.db import CosmicBotz
 from utils.fsm import fsm
 import config as cfg
 
+logger = logging.getLogger(__name__)
 router = Router()
-
-
-def admin_kb():
-    kb = InlineKeyboardBuilder()
-    kb.button(text="📊 Stats",      callback_data="adm_stats")
-    kb.button(text="📢 Broadcast",  callback_data="adm_broadcast")
-    kb.button(text="❌ Close",       callback_data="adm_close")
-    kb.adjust(2, 1)
-    return kb.as_markup()
 
 
 def is_admin(user_id: int) -> bool:
     return user_id in cfg.ADMIN_IDS
+
+
+def admin_kb():
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📊 Stats",     callback_data="adm_stats")
+    kb.button(text="📢 Broadcast", callback_data="adm_broadcast")
+    kb.button(text="❌ Close",      callback_data="adm_close")
+    kb.adjust(2, 1)
+    return kb.as_markup()
 
 
 @router.message(Command("admin"))
@@ -50,7 +53,7 @@ async def cmd_ban(message: Message):
     if not is_admin(message.from_user.id):
         return
     args = message.text.split()[1:]
-    if not args:
+    if not args or not args[0].isdigit():
         await message.answer("Usage: /ban <code>user_id</code>")
         return
     uid = int(args[0])
@@ -63,7 +66,7 @@ async def cmd_unban(message: Message):
     if not is_admin(message.from_user.id):
         return
     args = message.text.split()[1:]
-    if not args:
+    if not args or not args[0].isdigit():
         await message.answer("Usage: /unban <code>user_id</code>")
         return
     uid = int(args[0])
@@ -76,12 +79,12 @@ async def cmd_addpremium(message: Message):
     if not is_admin(message.from_user.id):
         return
     args = message.text.split()[1:]
-    if not args:
+    if not args or not args[0].isdigit():
         await message.answer("Usage: /addpremium <code>user_id</code>")
         return
     uid = int(args[0])
     await CosmicBotz.set_premium(uid, True)
-    await message.answer(f"⭐ User <code>{uid}</code> upgraded to Premium.")
+    await message.answer(f"⭐ <code>{uid}</code> upgraded to Premium.")
     try:
         await message.bot.send_message(uid, "🎉 <b>You've been upgraded to ⭐ Premium!</b>")
     except Exception:
@@ -93,7 +96,7 @@ async def cmd_revokepremium(message: Message):
     if not is_admin(message.from_user.id):
         return
     args = message.text.split()[1:]
-    if not args:
+    if not args or not args[0].isdigit():
         await message.answer("Usage: /revokepremium <code>user_id</code>")
         return
     uid = int(args[0])
@@ -106,13 +109,13 @@ async def cmd_userinfo(message: Message):
     if not is_admin(message.from_user.id):
         return
     args = message.text.split()[1:]
-    if not args:
+    if not args or not args[0].lstrip("-").isdigit():
         await message.answer("Usage: /userinfo <code>user_id</code>")
         return
     uid  = int(args[0])
     user = await CosmicBotz.get_user(uid)
     if not user:
-        await message.answer("❌ User not found.")
+        await message.answer("❌ User not found in DB.")
         return
     await message.answer(
         f"👤 <b>User Info</b>\n\n"
@@ -139,6 +142,7 @@ async def cmd_globalstats(message: Message):
 
 
 async def do_broadcast(message: Message, text: str):
+    """Called from content.py handle_text_input when step=adm_broadcast."""
     await fsm.clear(message.from_user.id)
     user_ids = await CosmicBotz.get_all_user_ids()
     status   = await message.answer(f"📤 Broadcasting to <b>{len(user_ids)}</b> users...")
@@ -149,7 +153,12 @@ async def do_broadcast(message: Message, text: str):
             ok += 1
         except Exception:
             fail += 1
-    await status.edit_text(f"✅ Done!  ✔ Sent: <b>{ok}</b>  ✘ Failed: <b>{fail}</b>")
+        # Rate limit: Telegram allows ~30 msgs/sec, be safe at 25
+        if ok % 25 == 0:
+            await asyncio.sleep(1)
+    await status.edit_text(
+        f"✅ Broadcast done!\n✔ Sent: <b>{ok}</b>  ✘ Failed: <b>{fail}</b>"
+    )
 
 
 @router.callback_query(F.data.startswith("adm_"))
@@ -169,6 +178,9 @@ async def adm_callback(cb: CallbackQuery):
         )
     elif data == "adm_broadcast":
         await fsm.set(cb.from_user.id, {"step": "adm_broadcast"})
-        await cb.message.edit_text("📢 Send the broadcast message:")
+        await cb.message.edit_text("📢 Send the broadcast message now:")
     elif data == "adm_close":
-        await cb.message.delete()
+        try:
+            await cb.message.delete()
+        except Exception:
+            pass
