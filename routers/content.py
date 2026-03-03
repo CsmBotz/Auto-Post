@@ -14,7 +14,7 @@ from thumbnail.processor import build_thumbnail, process_custom_thumbnail
 from utils.fsm import fsm
 from utils.helpers import (
     extract_query, search_kb, thumbnail_kb, preview_kb,
-    template_kb, add_button_start_kb, button_manage_kb,
+    template_kb, add_button_start_kb, button_manage_kb, default_buttons_kb,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,8 +32,10 @@ FETCHERS = {
     "manhwa": (_anilist.search_manhwa, _anilist.get_manhwa,  "manhwa"),
 }
 EXAMPLES = {
-    "movie": "Inception", "tvshow": "Breaking Bad",
-    "anime": "Attack on Titan", "manhwa": "Solo Leveling",
+    "movie":  "Inception",
+    "tvshow": "Breaking Bad",
+    "anime":  "Attack on Titan",
+    "manhwa": "Solo Leveling",
 }
 PREFIX_TO_CAT = {"movie": "movie", "tv": "tvshow", "anime": "anime", "manhwa": "manhwa"}
 CAT_TO_PREFIX = {"movie": "movie", "tvshow": "tv", "anime": "anime", "manhwa": "manhwa"}
@@ -48,14 +50,13 @@ MAX_BUTTONS = MAX_COLS * MAX_ROWS
 def build_post_keyboard(buttons: list) -> InlineKeyboardMarkup | None:
     if not buttons:
         return None
-    kb = InlineKeyboardBuilder()
+    kb   = InlineKeyboardBuilder()
+    rows: dict[int, int] = {}
     for btn in buttons:
         if btn.get("url"):
             kb.button(text=btn["text"], url=btn["url"])
         elif btn.get("callback_data"):
             kb.button(text=btn["text"], callback_data=btn["callback_data"])
-    rows: dict[int, int] = {}
-    for btn in buttons:
         r = btn.get("row", 0)
         rows[r] = rows.get(r, 0) + 1
     if rows:
@@ -111,7 +112,7 @@ def _btn_manager_text(buttons: list) -> str:
 
 # ── Preview builder ───────────────────────────────────────────────────────────
 
-async def _build_preview_data(user_id: int):
+async def _build_preview_data(user_id: int, bot=None):
     state = await fsm.get(user_id)
     if not state:
         return None
@@ -120,16 +121,24 @@ async def _build_preview_data(user_id: int):
     custom_image = state.get("custom_image")
     settings     = await CosmicBotz.get_user_settings(user_id)
     watermark    = settings.get("watermark", "")
+    logo_id      = settings.get("watermark_logo", "")
     tpl_body     = await CosmicBotz.get_active_template(user_id)
     caption      = _fmt.render(category, meta, template=tpl_body, user_settings=settings)
 
     if custom_image:
-        thumb = await process_custom_thumbnail(custom_image, watermark=watermark)
+        thumb = await process_custom_thumbnail(
+            custom_image,
+            watermark=watermark,
+            watermark_logo_id=logo_id,
+            bot=bot,
+        )
     else:
         thumb = await build_thumbnail(
             poster_url=meta.get("poster"),
             backdrop_url=meta.get("backdrop") or meta.get("banner"),
             watermark=watermark,
+            watermark_logo_id=logo_id,
+            bot=bot,
             meta={**meta, "_category": category},
         )
 
@@ -140,7 +149,7 @@ async def _build_preview_data(user_id: int):
 
 async def _show_preview(cb: CallbackQuery):
     user_id = cb.from_user.id
-    result  = await _build_preview_data(user_id)
+    result  = await _build_preview_data(user_id, bot=cb.bot)
     if not result:
         try:
             await cb.message.edit_text("❌ Session expired. Start again.")
@@ -161,7 +170,7 @@ async def _show_preview(cb: CallbackQuery):
 
 
 async def _show_preview_from_message(msg: Message, user_id: int):
-    result = await _build_preview_data(user_id)
+    result = await _build_preview_data(user_id, bot=msg.bot)
     if not result:
         await msg.edit_text("❌ Session expired. Start again.")
         return
@@ -260,7 +269,24 @@ async def cb_skip_thumb(cb: CallbackQuery):
 async def handle_photo(message: Message):
     user_id = message.from_user.id
     state   = await fsm.get(user_id)
-    if not state or state.get("step") != "thumbnail":
+    if not state:
+        return
+    step = state.get("step", "")
+
+    # ── Logo watermark upload ─────────────────────────────────────────────────
+    if step == "cfg_wm_logo":
+        file_id = message.photo[-1].file_id
+        await CosmicBotz.update_user_settings(user_id, {"watermark_logo": file_id})
+        await fsm.clear(user_id)
+        await message.answer(
+            "✅ <b>Logo watermark saved!</b>\n\n"
+            "It will appear on your thumbnails automatically.\n"
+            "Go to /settings → Logo Watermark to remove it anytime."
+        )
+        return
+
+    # ── Custom thumbnail upload ───────────────────────────────────────────────
+    if step != "thumbnail":
         return
     wait = await message.answer("✅ Thumbnail received! Building preview...")
     try:
@@ -274,7 +300,7 @@ async def handle_photo(message: Message):
         await wait.edit_text("❌ Failed to process image. Try again or tap Skip.")
 
 
-# ── Post channel ──────────────────────────────────────────────────────────────
+# ── Post to channel ───────────────────────────────────────────────────────────
 
 @router.callback_query(F.data.regexp(r"^(movie|tv|anime|manhwa)_post_channel$"))
 async def cb_post_channel(cb: CallbackQuery):
@@ -387,7 +413,7 @@ async def cb_cancel(cb: CallbackQuery):
         pass
 
 
-# ── BUTTON FLOW ───────────────────────────────────────────────────────────────
+# ── Button flow ───────────────────────────────────────────────────────────────
 
 @router.callback_query(F.data.regexp(r"^(movie|tv|anime|manhwa)_btn_start$"))
 async def cb_btn_start(cb: CallbackQuery):
@@ -399,7 +425,6 @@ async def cb_btn_start(cb: CallbackQuery):
     buttons = state.get("buttons", [])
     prefix  = CAT_TO_PREFIX[state.get("category", "movie")]
     kb      = button_manage_kb(prefix, buttons) if buttons else add_button_start_kb(prefix)
-    # message could be photo (caption) or text — handle both
     try:
         await cb.message.edit_caption(caption=_btn_manager_text(buttons), reply_markup=kb)
     except Exception:
@@ -454,6 +479,160 @@ async def cb_btn_delete(cb: CallbackQuery):
         await cb.message.edit_text(_btn_manager_text(buttons), reply_markup=kb)
 
 
+@router.callback_query(F.data.regexp(r"^(movie|tv|anime|manhwa)_btn_defaults$"))
+async def cb_btn_defaults(cb: CallbackQuery):
+    """Show pre-built button sets."""
+    await cb.answer()
+    uid   = cb.from_user.id
+    state = await fsm.get(uid)
+    if not state:
+        await cb.answer("❌ Session expired.", show_alert=True)
+        return
+    category   = state.get("category", "movie")
+    prefix     = CAT_TO_PREFIX[category]
+    settings   = await CosmicBotz.get_user_settings(uid)
+    saved_btns = settings.get("default_buttons", [])
+
+    saved_preview = ""
+    if saved_btns:
+        saved_preview = "\n\n<b>Your saved defaults:</b>\n" + "\n".join(
+            f"  • {b['text']}" for b in saved_btns
+        )
+
+    text = (
+        "⚙️ <b>Default Button Sets</b>\n\n"
+        "Pick a preset or use your saved defaults."
+        + saved_preview
+    )
+    kb = default_buttons_kb(prefix, category)
+
+    if saved_btns:
+        builder = InlineKeyboardBuilder()
+        builder.button(text="⭐ Use My Saved Defaults", callback_data=f"{prefix}_dflbtn_saved")
+        for row in kb.inline_keyboard:
+            for btn in row:
+                if btn.callback_data:
+                    builder.button(text=btn.text, callback_data=btn.callback_data)
+        builder.adjust(1)
+        kb = builder.as_markup()
+
+    try:
+        await cb.message.edit_caption(caption=text, reply_markup=kb)
+    except Exception:
+        await cb.message.edit_text(text, reply_markup=kb)
+
+
+@router.callback_query(F.data.regexp(r"^(movie|tv|anime|manhwa)_dflbtn_(.+)$"))
+async def cb_apply_default_buttons(cb: CallbackQuery):
+    """Apply a preset button set."""
+    await cb.answer()
+    uid      = cb.from_user.id
+    state    = await fsm.get(uid)
+    if not state:
+        return
+    category = state.get("category", "movie")
+    prefix   = CAT_TO_PREFIX[category]
+    action   = cb.data.split("_dflbtn_", 1)[1]
+    settings = await CosmicBotz.get_user_settings(uid)
+    channel  = settings.get("channel_id", "")
+
+    watch_label = "📖 Read Now" if category == "manhwa" else "▶️ Watch Now"
+    watch_url   = channel if channel else "https://t.me/"
+
+    presets = {
+        "watch_dl": [
+            {"text": watch_label,       "url": watch_url,                 "row": 0},
+            {"text": "📥 Download",     "url": watch_url,                 "row": 0},
+        ],
+        "watch": [
+            {"text": watch_label,       "url": watch_url,                 "row": 0},
+        ],
+        "dl": [
+            {"text": "📥 Download",     "url": watch_url,                 "row": 0},
+        ],
+        "read_rate": [
+            {"text": "📖 Read Now",     "url": watch_url,                 "row": 0},
+            {"text": "⭐ Rate It",      "url": "https://myanimelist.net", "row": 0},
+        ],
+        "join_watch": [
+            {"text": "🔔 Join Channel", "url": watch_url,                 "row": 0},
+            {"text": watch_label,       "url": watch_url,                 "row": 1},
+        ],
+        "clear":  [],
+        "saved":  settings.get("default_buttons", []),
+    }
+
+    buttons = presets.get(action, [])
+    await fsm.update(uid, {"buttons": buttons, "step": "post"})
+    kb = button_manage_kb(prefix, buttons) if buttons else add_button_start_kb(prefix)
+    try:
+        await cb.message.edit_caption(caption=_btn_manager_text(buttons), reply_markup=kb)
+    except Exception:
+        await cb.message.edit_text(_btn_manager_text(buttons), reply_markup=kb)
+
+
+@router.callback_query(F.data.regexp(r"^(movie|tv|anime|manhwa)_btn_loadset$"))
+async def cb_btn_loadset(cb: CallbackQuery):
+    """Show user's saved button sets to pick from."""
+    await cb.answer()
+    uid   = cb.from_user.id
+    state = await fsm.get(uid)
+    if not state:
+        return
+    sets   = await CosmicBotz.list_button_sets(uid)
+    prefix = CAT_TO_PREFIX[state.get("category", "movie")]
+    if not sets:
+        await cb.answer(
+            "No saved button sets yet.\nUse /buttonsets to create one.",
+            show_alert=True,
+        )
+        return
+    kb = InlineKeyboardBuilder()
+    for i, bs in enumerate(sets):
+        count = len(bs.get("buttons", []))
+        kb.button(
+            text=f"🔗 {bs['name']}  ({count} btns)",
+            callback_data=f"{prefix}_btn_applysets_{i}",
+        )
+    kb.button(text="🔙 Back", callback_data=f"{prefix}_btn_start")
+    kb.adjust(1)
+    try:
+        await cb.message.edit_caption(
+            caption="🔗 <b>Pick a Button Set</b>\n\nChoose a saved set to apply:",
+            reply_markup=kb.as_markup(),
+        )
+    except Exception:
+        await cb.message.edit_text(
+            "🔗 <b>Pick a Button Set</b>\n\nChoose a saved set to apply:",
+            reply_markup=kb.as_markup(),
+        )
+
+
+@router.callback_query(F.data.regexp(r"^(movie|tv|anime|manhwa)_btn_applysets_(\d+)$"))
+async def cb_btn_applyset(cb: CallbackQuery):
+    """Apply chosen button set to current post."""
+    await cb.answer()
+    uid   = cb.from_user.id
+    idx   = int(cb.data.split("_btn_applysets_")[1])
+    state = await fsm.get(uid)
+    if not state:
+        return
+    sets = await CosmicBotz.list_button_sets(uid)
+    if idx >= len(sets):
+        await cb.answer("Set not found.", show_alert=True)
+        return
+    buttons  = list(sets[idx].get("buttons", []))
+    category = state.get("category", "movie")
+    prefix   = CAT_TO_PREFIX[category]
+    await fsm.update(uid, {"buttons": buttons, "step": "post"})
+    await cb.answer(f"✅ Applied: {sets[idx]['name']}", show_alert=True)
+    kb = button_manage_kb(prefix, buttons) if buttons else add_button_start_kb(prefix)
+    try:
+        await cb.message.edit_caption(caption=_btn_manager_text(buttons), reply_markup=kb)
+    except Exception:
+        await cb.message.edit_text(_btn_manager_text(buttons), reply_markup=kb)
+
+
 @router.callback_query(F.data.regexp(r"^(movie|tv|anime|manhwa)_btnpos_(\d+)$"))
 async def cb_btn_position(cb: CallbackQuery):
     """User chose which row — finalize button and return to manager."""
@@ -461,37 +640,27 @@ async def cb_btn_position(cb: CallbackQuery):
     uid   = cb.from_user.id
     row   = int(cb.data.split("_btnpos_")[1])
     state = await fsm.get(uid)
-
     if not state:
         await cb.answer("❌ Session expired.", show_alert=True)
         return
-
     pending_name = state.get("pending_btn_name")
     pending_url  = state.get("pending_btn_url")
-
     if not pending_name or not pending_url:
         await cb.answer("❌ Button data lost, please start again.", show_alert=True)
         return
-
-    buttons = list(state.get("buttons", []))
+    buttons  = list(state.get("buttons", []))
     buttons.append({"text": pending_name, "url": pending_url, "row": row})
-
     category = state.get("category", "movie")
     prefix   = CAT_TO_PREFIX[category]
-
     await fsm.update(uid, {
         "step":             "post",
         "buttons":          buttons,
         "pending_btn_name": None,
         "pending_btn_url":  None,
     })
-
-    kb = button_manage_kb(prefix, buttons)
-    # This callback fires on a plain text message (the step-3 message)
-    # So use edit_text not edit_caption
     await cb.message.edit_text(
         _btn_manager_text(buttons),
-        reply_markup=kb,
+        reply_markup=button_manage_kb(prefix, buttons),
     )
 
 
@@ -529,7 +698,7 @@ async def cb_btn_done(cb: CallbackQuery):
         await cb.answer(f"❌ {e}", show_alert=True)
 
 
-# ── SINGLE TEXT HANDLER ───────────────────────────────────────────────────────
+# ── Single text handler ───────────────────────────────────────────────────────
 
 @router.message(F.text & ~F.text.startswith("/"))
 async def handle_text_input(message: Message):
@@ -539,6 +708,8 @@ async def handle_text_input(message: Message):
         return
     step = state.get("step", "")
     text = message.text.strip()
+
+    # ── Post button flow ──────────────────────────────────────────────────────
 
     if step == "btn_name":
         if len(text) > 64:
@@ -557,13 +728,11 @@ async def handle_text_input(message: Message):
         if not (text.startswith("http://") or text.startswith("https://")):
             await message.answer("⚠️ Must start with <code>https://</code> — try again:")
             return
-        # Save URL to state, then ask position
         await fsm.update(uid, {"step": "btn_pos", "pending_btn_url": text})
         buttons  = state.get("buttons", [])
         category = state.get("category", "movie")
         prefix   = CAT_TO_PREFIX[category]
         preview  = _layout_preview(buttons) if buttons else "<i>This will be the first button.</i>"
-        # Send as a NEW plain text message — position_kb callback will edit_text this message
         await message.answer(
             f"📐 <b>Step 3 of 3 — Choose Row</b>\n\n"
             f"Label: <b>{state.get('pending_btn_name')}</b>\n"
@@ -572,6 +741,8 @@ async def handle_text_input(message: Message):
             "Which row should this button go in?",
             reply_markup=_position_kb(prefix, buttons),
         )
+
+    # ── Settings flow ─────────────────────────────────────────────────────────
 
     elif step == "cfg_watermark":
         await CosmicBotz.upsert_user(uid, "", "")
@@ -594,6 +765,89 @@ async def handle_text_input(message: Message):
             "Make sure the bot is admin in that channel!"
         )
         await fsm.clear(uid)
+
+    elif step == "cfg_defbtn_name":
+        if text.lower() == "clear":
+            await CosmicBotz.update_user_settings(uid, {"default_buttons": []})
+            await message.answer("✅ Default buttons cleared.")
+            await fsm.clear(uid)
+            return
+        parts = [p.strip() for p in text.split("|")]
+        if len(parts) < 2:
+            await message.answer("❌ Format: <code>Name | https://url | row</code>")
+            return
+        btn_text = parts[0]
+        btn_url  = parts[1]
+        btn_row  = int(parts[2]) - 1 if len(parts) > 2 and parts[2].isdigit() else 0
+        if not btn_url.startswith("http"):
+            await message.answer("❌ URL must start with https://")
+            return
+        s       = await CosmicBotz.get_user_settings(uid)
+        dflbtns = list(s.get("default_buttons", []))
+        dflbtns.append({"text": btn_text, "url": btn_url, "row": btn_row})
+        await CosmicBotz.update_user_settings(uid, {"default_buttons": dflbtns})
+        await message.answer(
+            f"✅ Default button added: <b>{btn_text}</b>\n"
+            "Send another or use /settings to finish."
+        )
+
+    # ── Button set creation flow ──────────────────────────────────────────────
+
+    elif step == "bset_name":
+        if " " in text or len(text) > 32:
+            await message.answer("❌ No spaces, max 32 chars. Try again:")
+            return
+        await fsm.update(uid, {"step": "bset_btn_name", "bset_name": text, "bset_buttons": []})
+        await message.answer(
+            f"✅ Name: <b>{text}</b>\n\n"
+            "Now add your first button.\n"
+            "Send the <b>button label</b>:\n\n"
+            "▶️ Watch Now\n📥 Download\n🔔 Join Channel"
+        )
+
+    elif step == "bset_btn_name":
+        if len(text) > 64:
+            await message.answer("⚠️ Max 64 chars. Try again:")
+            return
+        await fsm.update(uid, {"step": "bset_btn_url", "bset_pending_name": text})
+        await message.answer(
+            f"🔗 <b>Button URL</b>\n\nLabel: <b>{text}</b>\n\nSend the URL:"
+        )
+
+    elif step == "bset_btn_url":
+        if not (text.startswith("http://") or text.startswith("https://")):
+            await message.answer("⚠️ Must start with https:// — try again:")
+            return
+        await fsm.update(uid, {"step": "bset_btn_row", "bset_pending_url": text})
+        fresh = await fsm.get(uid)
+        btns  = fresh.get("bset_buttons", [])
+        rows: dict = {}
+        for b in btns:
+            rows.setdefault(b.get("row", 0), []).append(b["text"])
+        preview = (
+            "\n".join(f"  Row {r+1}: " + "  |  ".join(rows[r]) for r in sorted(rows))
+            or "  <i>First button</i>"
+        )
+        kb = InlineKeyboardBuilder()
+        for r in range(4):
+            existing = rows.get(r, [])
+            if len(existing) < 4:
+                label = f"Row {r+1}" + (f"  [{len(existing)} here]" if existing else "  [empty]")
+                kb.button(text=label, callback_data=f"bset_row:{r}")
+        kb.adjust(2)
+        await message.answer(
+            f"📐 <b>Which row?</b>\n\n<b>Current:</b>\n{preview}",
+            reply_markup=kb.as_markup(),
+        )
+
+    elif step == "bset_edit":
+        if len(text) > 64:
+            await message.answer("⚠️ Max 64 chars. Try again:")
+            return
+        await fsm.update(uid, {"step": "bset_btn_url", "bset_pending_name": text})
+        await message.answer(f"🔗 URL for <b>{text}</b>:")
+
+    # ── Template flow ─────────────────────────────────────────────────────────
 
     elif step == "tpl_name":
         if " " in text or len(text) > 32:
