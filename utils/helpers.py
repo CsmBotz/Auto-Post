@@ -54,10 +54,11 @@ def template_kb(templates: list, prefix: str) -> InlineKeyboardMarkup:
 
 def add_button_start_kb(prefix: str) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
-    kb.button(text="➕ Add Button",       callback_data=f"{prefix}_btn_add")
-    kb.button(text="⚙️ Default Buttons", callback_data=f"{prefix}_btn_defaults")
-    kb.button(text="✅ Post Now",         callback_data=f"{prefix}_post_direct")
-    kb.button(text="🔙 Back",             callback_data=f"{prefix}_back_preview")
+    kb.button(text="➕ Add Button",        callback_data=f"{prefix}_btn_add")
+    kb.button(text="⚙️ Default Buttons",  callback_data=f"{prefix}_btn_defaults")
+    kb.button(text="📂 Load Button Set",   callback_data=f"{prefix}_btn_loadset")
+    kb.button(text="✅ Post Now",          callback_data=f"{prefix}_post_direct")
+    kb.button(text="🔙 Back",              callback_data=f"{prefix}_back_preview")
     kb.adjust(1)
     return kb.as_markup()
 
@@ -67,10 +68,11 @@ def button_manage_kb(prefix: str, buttons: list) -> InlineKeyboardMarkup:
     for i, btn in enumerate(buttons):
         row_label = f"Row {btn.get('row', 0) + 1}"
         kb.button(text=f"🗑 {btn['text']} [{row_label}]", callback_data=f"{prefix}_btn_del_{i}")
-    kb.button(text="➕ Add Button",       callback_data=f"{prefix}_btn_add")
-    kb.button(text="⚙️ Default Buttons", callback_data=f"{prefix}_btn_defaults")
-    kb.button(text="✅ Post Now",         callback_data=f"{prefix}_btn_done")
-    kb.button(text="🔙 Back",             callback_data=f"{prefix}_back_preview")
+    kb.button(text="➕ Add Button",        callback_data=f"{prefix}_btn_add")
+    kb.button(text="⚙️ Default Buttons",  callback_data=f"{prefix}_btn_defaults")
+    kb.button(text="📂 Load Button Set",   callback_data=f"{prefix}_btn_loadset")
+    kb.button(text="✅ Post Now",          callback_data=f"{prefix}_btn_done")
+    kb.button(text="🔙 Back",              callback_data=f"{prefix}_back_preview")
     kb.adjust(1)
     return kb.as_markup()
 
