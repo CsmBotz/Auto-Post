@@ -5,6 +5,7 @@ Usage anywhere:
     from database.db import CosmicBotz
     await CosmicBotz.get_user(user_id)
 """
+
 import logging
 from datetime import datetime, date
 from typing import Optional, Dict, List
@@ -46,11 +47,14 @@ class Database:
                     "post_count": 0,
                     "daily_posts": {},
                     "settings": {
-                        "watermark":       "",
-                        "channel_id":      None,
-                        "active_template": "default",
-                        "quality":         cfg.DEFAULT_QUALITY,
-                        "audio":           cfg.DEFAULT_AUDIO,
+                        "watermark":        "",
+                        "watermark_logo":   "",   # Telegram file_id of logo photo
+                        "channel_id":       None,
+                        "active_template":  "default",
+                        "active_btn_set":   "",   # name of active saved button set
+                        "default_buttons":  [],   # auto-applied buttons on every post
+                        "quality":          cfg.DEFAULT_QUALITY,
+                        "audio":            cfg.DEFAULT_AUDIO,
                     },
                 },
             },
@@ -138,11 +142,29 @@ class Database:
 
     async def get_active_template(self, user_id: int) -> Optional[str]:
         settings = await self.get_user_settings(user_id)
-        name = settings.get("active_template", "default")
+        name     = settings.get("active_template", "default")
         if name == "default":
             return None
         tpl = await self.get_template(user_id, name)
         return tpl["body"] if tpl else None
+
+    # ── Button Sets ───────────────────────────────────────────────────────────
+
+    async def save_button_set(self, user_id: int, name: str, buttons: list):
+        await self._db().button_sets.update_one(
+            {"user_id": user_id, "name": name},
+            {"$set": {"buttons": buttons, "updated": datetime.utcnow()}},
+            upsert=True,
+        )
+
+    async def get_button_set(self, user_id: int, name: str) -> Optional[Dict]:
+        return await self._db().button_sets.find_one({"user_id": user_id, "name": name})
+
+    async def list_button_sets(self, user_id: int) -> List[Dict]:
+        return await self._db().button_sets.find({"user_id": user_id}).to_list(20)
+
+    async def delete_button_set(self, user_id: int, name: str):
+        await self._db().button_sets.delete_one({"user_id": user_id, "name": name})
 
 
 # ── Singleton ─────────────────────────────────────────────────────────────────
