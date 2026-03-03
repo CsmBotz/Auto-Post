@@ -1,5 +1,5 @@
 """
-Thumbnail Processor — Anime Metrix streaming style
+Thumbnail Processor — Website streaming style
 """
 
 import io
@@ -29,6 +29,18 @@ async def _fetch(url: str) -> Optional[Image.Image]:
     return None
 
 
+async def _fetch_logo(file_id: str, bot) -> Optional[Image.Image]:
+    """Download logo from Telegram by file_id."""
+    try:
+        file = await bot.get_file(file_id)
+        buf  = io.BytesIO()
+        await bot.download_file(file.file_path, destination=buf)
+        return Image.open(buf).convert("RGBA")
+    except Exception as e:
+        logger.error(f"Logo fetch failed: {e}")
+    return None
+
+
 def _font(size: int, bold: bool = True) -> ImageFont.FreeTypeFont:
     path = _FONT_BOLD if bold else _FONT_REG
     try:
@@ -55,83 +67,112 @@ def _wrap(text: str, font, draw, max_w: int) -> list:
     return lines
 
 
-# ── Watermark — top-left brand logo ──────────────────────────────────────────
+# ── Watermark ─────────────────────────────────────────────────────────────────
 
-def _draw_logo_watermark(canvas: Image.Image, text: str) -> Image.Image:
-    """Top-left brand name like 'Anime Metrix' with hamburger menu icon."""
+def _draw_text_watermark(canvas: Image.Image, text: str) -> Image.Image:
+    """Clean plain text watermark — white text with subtle shadow, no box."""
     if not text:
         return canvas
+    W, H  = canvas.size
+    font  = _font(26)
+    ov    = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    od    = ImageDraw.Draw(ov)
+    bbox  = od.textbbox((0, 0), text, font=font)
+    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    x = W - tw - 18
+    y = 18
+    # Subtle drop shadow
+    od.text((x + 2, y + 2), text, font=font, fill=(0, 0, 0, 160))
+    od.text((x,     y),     text, font=font, fill=(255, 255, 255, 230))
+    return Image.alpha_composite(canvas.convert("RGBA"), ov)
 
-    W, H = canvas.size
-    ov   = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    od   = ImageDraw.Draw(ov)
 
-    font = _font(26)
-    x, y = 72, 18
+def _draw_logo_watermark(
+    canvas: Image.Image,
+    logo: Image.Image,
+    text: str = "",
+) -> Image.Image:
+    """Logo image top-right — Anime Metrix style (red bar + logo + optional text)."""
+    W, H   = canvas.size
+    logo_h = 52
+    logo_w = int(logo.width * logo_h / logo.height)
+    logo   = logo.resize((logo_w, logo_h), Image.LANCZOS)
+    ov     = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    od     = ImageDraw.Draw(ov)
 
-    # Hamburger menu icon (three lines) to the left of brand name
-    hx, hy = 30, 24
-    for i in range(3):
-        od.rectangle([hx, hy + i * 9, hx + 22, hy + i * 9 + 3], fill=(255, 255, 255, 220))
-
-    # Brand name text
-    od.text((x, y), text, font=font, fill=(255, 255, 255, 255))
+    if text:
+        font        = _font(28)
+        bbox        = od.textbbox((0, 0), text, font=font)
+        tw, th      = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        pad         = 12
+        total_w     = logo_w + 10 + tw + pad * 2 + 4
+        x, y        = W - total_w - 12, 14
+        h           = max(logo_h, th) + pad * 2
+        # Dark bg pill
+        od.rectangle([x,     y, x + total_w, y + h], fill=(10, 10, 10, 190))
+        # Red accent bar
+        od.rectangle([x,     y, x + 4,       y + h], fill=(210, 25, 25, 255))
+        # Logo
+        lx = x + 4 + pad
+        ly = y + (h - logo_h) // 2
+        ov.paste(logo, (lx, ly), logo)
+        # Text
+        od.text((lx + logo_w + 10, y + (h - th) // 2), text, font=font, fill=(255, 255, 255, 255))
+    else:
+        # Just logo — small pill top-right
+        x = W - logo_w - 20
+        y = 14
+        od.rectangle([x - 8, y - 6, x + logo_w + 8, y + logo_h + 6], fill=(10, 10, 10, 180))
+        ov.paste(logo, (x, y), logo)
 
     return Image.alpha_composite(canvas.convert("RGBA"), ov)
 
 
-# ── Top-right genre nav bar ───────────────────────────────────────────────────
+# ── Top nav bar ───────────────────────────────────────────────────────────────
 
 def _draw_top_nav(canvas: Image.Image, genres: str) -> Image.Image:
-    """Render genre tags top-right like a nav bar — Action  Comedy  Adventure."""
-    W, H = canvas.size
-    ov   = Image.new("RGBA", (W, H), (0, 0, 0, 0))
-    od   = ImageDraw.Draw(ov)
-
+    """Genre tags right-aligned in top nav bar — Action  Comedy  Adventure."""
+    W, H  = canvas.size
+    ov    = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    od    = ImageDraw.Draw(ov)
     items = [g.strip() for g in genres.split(",") if g.strip()][:4] if genres else []
-    font  = _font(24, bold=False)
-
-    # Measure total width for right-alignment
+    if not items:
+        return canvas
+    font    = _font(24, bold=False)
     sep     = "    "
     sep_w   = int(od.textlength(sep, font=font))
     widths  = [int(od.textlength(g, font=font)) for g in items]
-    total_w = sum(widths) + sep_w * (len(items) - 1) if items else 0
-
-    # Search icon placeholder + close/minimise buttons on far right
-    right_margin = 130
-    x = W - right_margin - total_w
+    total_w = sum(widths) + sep_w * (len(items) - 1)
+    x = W - 130 - total_w
     y = 22
-
     for i, g in enumerate(items):
         od.text((x, y), g, font=font, fill=(255, 255, 255, 230))
         x += widths[i]
         if i < len(items) - 1:
             od.text((x, y), sep, font=font, fill=(255, 255, 255, 100))
             x += sep_w
-
     return Image.alpha_composite(canvas.convert("RGBA"), ov)
 
 
-# ── Card Builder ──────────────────────────────────────────────────────────────
+# ── Card builder ──────────────────────────────────────────────────────────────
 
 def _build_card(
     poster: Image.Image,
     backdrop: Optional[Image.Image],
-    watermark: str,
     meta: dict,
 ) -> Image.Image:
     W, H = _SIZE
 
-    # ── Very dark base ────────────────────────────────────────────────────────
+    # Very dark base
     canvas = Image.new("RGBA", (W, H), (12, 14, 20, 255))
 
-    # Full blurred backdrop — very dark (almost black)
+    # Full blurred backdrop — near-black
     bg = (backdrop or poster).convert("RGBA").resize((W, H), Image.LANCZOS)
     bg = bg.filter(ImageFilter.GaussianBlur(10))
     bg = ImageEnhance.Brightness(bg).enhance(0.18)
     canvas.paste(bg.convert("RGBA"), (0, 0))
 
-    # ── Character art — right side, tall, slightly cut at bottom ─────────────
+    # Character art — right side, tall
     char_img = poster.convert("RGBA")
     char_h   = int(H * 1.08)
     char_w   = int(char_h * char_img.width / char_img.height)
@@ -139,7 +180,7 @@ def _build_card(
     char_x   = W - char_w + int(char_w * 0.05)
     char_y   = -int(H * 0.05)
 
-    # Fade left edge of character art
+    # Fade left edge
     fade_w = int(char_w * 0.50)
     for i in range(fade_w):
         alpha = int(255 * (i / fade_w) ** 1.8)
@@ -160,7 +201,7 @@ def _build_card(
     if char_x < W and char_y < H:
         canvas.paste(char_img, (char_x, char_y), char_img)
 
-    # ── Strong left-side dark gradient for text legibility ────────────────────
+    # Left dark gradient for text legibility
     grad = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     gd   = ImageDraw.Draw(grad)
     for i in range(W):
@@ -182,17 +223,16 @@ def _build_card(
     left_x = 58
     text_w = int(W * 0.46)
 
-    # ── Title — very large bold white, left aligned ───────────────────────────
+    # Title — large bold white
     tf     = _font(72)
     tlines = _wrap(title, tf, draw, text_w)[:3]
-    title_y = 170
-    y       = title_y
+    y      = 170
     for ln in tlines:
         draw.text((left_x, y), ln, font=tf, fill=(255, 255, 255, 255))
         y += 84
     y += 18
 
-    # ── Description — small grey text ────────────────────────────────────────
+    # Description
     if overview:
         df = _font(23, bold=False)
         for ln in _wrap(overview, df, draw, text_w)[:4]:
@@ -200,37 +240,32 @@ def _build_card(
             y += 31
     y += 28
 
-    # ── Buttons — DOWNLOAD (outline+diagonal cut) + WATCH NOW (red) ──────────
+    # Buttons — DOWNLOAD (outline) + WATCH NOW (red)
     btn_font = _font(22)
     btn_h    = 50
-    btn_gap  = 0   # buttons touch (connected look like reference)
 
-    # DOWNLOAD — dark outline button with right-side diagonal cut
     dl_label = "DOWNLOAD"
     dl_w     = int(draw.textlength(dl_label, font=btn_font)) + 52
-
-    # Draw outline rectangle
     draw.rectangle([left_x, y, left_x + dl_w, y + btn_h], outline=(200, 200, 200, 180), width=2)
-    # Diagonal cut on right side (overlap with red button)
+    # Diagonal cut on right side
     cut_pts = [
         (left_x + dl_w - 14, y),
         (left_x + dl_w + 2,  y),
         (left_x + dl_w + 2,  y + btn_h),
         (left_x + dl_w - 14, y + btn_h),
     ]
-    draw.polygon(cut_pts, fill=(12, 14, 20, 255))  # erase corner with bg colour
+    draw.polygon(cut_pts, fill=(12, 14, 20, 255))
     dl_tx = left_x + (dl_w - int(draw.textlength(dl_label, font=btn_font))) // 2 - 4
     draw.text((dl_tx, y + 14), dl_label, font=btn_font, fill=(220, 220, 220, 240))
 
-    # WATCH NOW — red filled, starts right after DOWNLOAD
     wn_label = "WATCH NOW"
-    wn_x     = left_x + dl_w + btn_gap
+    wn_x     = left_x + dl_w
     wn_w     = int(draw.textlength(wn_label, font=btn_font)) + 52
     draw.rectangle([wn_x, y, wn_x + wn_w, y + btn_h], fill=(210, 25, 25, 255))
     wn_tx = wn_x + (wn_w - int(draw.textlength(wn_label, font=btn_font))) // 2
     draw.text((wn_tx, y + 14), wn_label, font=btn_font, fill=(255, 255, 255, 255))
 
-    # ── Episode info card — bottom right ─────────────────────────────────────
+    # Episode info card — bottom right
     card_w, card_h = 360, 128
     card_x = W - card_w - 32
     card_y = H - card_h - 32
@@ -240,7 +275,7 @@ def _build_card(
     cd.rounded_rectangle([0, 0, card_w, card_h], radius=10, fill=(18, 20, 28, 230))
     cd.rounded_rectangle([0, 0, card_w, card_h], radius=10, outline=(55, 58, 78, 180), width=1)
 
-    # Thumbnail inside card — right side
+    # Thumbnail inside card
     thumb_w, thumb_h = 100, card_h - 16
     thumb_x, thumb_y = card_w - thumb_w - 8, 8
     if backdrop or poster:
@@ -249,7 +284,6 @@ def _build_card(
         ImageDraw.Draw(th_mask).rounded_rectangle([0, 0, thumb_w, thumb_h], radius=6, fill=255)
         card.paste(th_img, (thumb_x, thumb_y), th_mask)
 
-    # Episode / Season / Duration text
     ep_str = episodes.zfill(2) if episodes not in ("?", "N/A", "None", "") else "01"
     cd.text((16, 14), f"Episode - {ep_str}", font=_font(28), fill=(255, 255, 255, 255))
 
@@ -262,13 +296,10 @@ def _build_card(
 
     canvas.paste(card, (card_x, card_y), card)
 
-    # ── Top nav bar (genre tags right-aligned) ────────────────────────────────
+    # Genre nav top-right
     canvas = _draw_top_nav(canvas, genres)
 
-    # ── Brand watermark top-left ──────────────────────────────────────────────
-    canvas = _draw_logo_watermark(canvas, watermark)
-
-    return canvas.convert("RGB")
+    return canvas
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -277,6 +308,8 @@ async def build_thumbnail(
     poster_url: Optional[str],
     backdrop_url: Optional[str] = None,
     watermark: str = "",
+    watermark_logo_id: str = "",
+    bot=None,
     meta: dict = {},
 ) -> bytes:
     os.makedirs("temp", exist_ok=True)
@@ -287,17 +320,42 @@ async def build_thumbnail(
         ImageDraw.Draw(poster).text((60, 280), "No Image", fill=(120, 120, 140), font=_font(28))
 
     backdrop = (await _fetch(backdrop_url)) if backdrop_url else None
-    card     = _build_card(poster, backdrop, watermark, meta)
+    card     = _build_card(poster, backdrop, meta)
+
+    # Apply watermark last
+    card = card.convert("RGBA")
+    if watermark_logo_id and bot:
+        logo = await _fetch_logo(watermark_logo_id, bot)
+        if logo:
+            card = _draw_logo_watermark(card, logo, watermark)
+        else:
+            card = _draw_text_watermark(card, watermark)
+    elif watermark:
+        card = _draw_text_watermark(card, watermark)
 
     buf = io.BytesIO()
-    card.save(buf, format="JPEG", quality=93, optimize=True)
+    card.convert("RGB").save(buf, format="JPEG", quality=93, optimize=True)
     return buf.getvalue()
 
 
-async def process_custom_thumbnail(photo_bytes: bytes, watermark: str = "") -> bytes:
-    img    = Image.open(io.BytesIO(photo_bytes)).convert("RGBA").resize(_SIZE, Image.LANCZOS)
-    canvas = _draw_logo_watermark(img.convert("RGBA"), watermark)
+async def process_custom_thumbnail(
+    photo_bytes: bytes,
+    watermark: str = "",
+    watermark_logo_id: str = "",
+    bot=None,
+) -> bytes:
+    img  = Image.open(io.BytesIO(photo_bytes)).convert("RGBA").resize(_SIZE, Image.LANCZOS)
+    card = img.convert("RGBA")
+
+    if watermark_logo_id and bot:
+        logo = await _fetch_logo(watermark_logo_id, bot)
+        if logo:
+            card = _draw_logo_watermark(card, logo, watermark)
+        else:
+            card = _draw_text_watermark(card, watermark)
+    elif watermark:
+        card = _draw_text_watermark(card, watermark)
 
     buf = io.BytesIO()
-    canvas.convert("RGB").save(buf, format="JPEG", quality=93, optimize=True)
+    card.convert("RGB").save(buf, format="JPEG", quality=93, optimize=True)
     return buf.getvalue()
