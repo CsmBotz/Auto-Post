@@ -71,24 +71,22 @@ def _wrap(text: str, font, draw, max_w: int) -> list:
 
 def _draw_text_watermark(canvas: Image.Image, text: str) -> Image.Image:
     """
-    Watermark — top-right dark pill box with white bold text.
-    Sits ABOVE the genre nav row so they never overlap.
+    Watermark — top-right clean dark pill, small professional size.
     """
     if not text:
         return canvas
     W, H  = canvas.size
-    font  = _font(32)           # bigger font
+    font  = _font(22, bold=False)   # smaller, regular weight = cleaner
     ov    = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     od    = ImageDraw.Draw(ov)
     bbox  = od.textbbox((0, 0), text, font=font)
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    px, py = 20, 10
-    x = W - tw - px * 2 - 14
-    y = 10                      # fixed top-right, above genre row
-    # Dark pill background
-    od.rectangle([x, y, x + tw + px * 2, y + th + py * 2], fill=(0, 0, 0, 210))
-    # White bold text
-    od.text((x + px, y + py), text, font=font, fill=(255, 255, 255, 255))
+    px, py = 14, 7
+    x = W - tw - px * 2 - 12
+    y = 12
+    # Dark pill — no border, subtle and clean
+    od.rectangle([x, y, x + tw + px * 2, y + th + py * 2], fill=(0, 0, 0, 200))
+    od.text((x + px, y + py), text, font=font, fill=(255, 255, 255, 240))
     return Image.alpha_composite(canvas.convert("RGBA"), ov)
 
 
@@ -260,7 +258,7 @@ def _build_card(
     draw.text((dl_tx, y + 14), dl_label, font=btn_font, fill=(255, 255, 255, 255))
 
     wn_label = "WATCH NOW"
-    wn_x     = left_x + dl_w
+    wn_x     = left_x + dl_w + 10   # 10px gap between buttons
     wn_w     = int(draw.textlength(wn_label, font=btn_font)) + 52
     draw.rectangle([wn_x, y, wn_x + wn_w, y + btn_h], fill=(210, 25, 25, 255))
     wn_tx = wn_x + (wn_w - int(draw.textlength(wn_label, font=btn_font))) // 2
