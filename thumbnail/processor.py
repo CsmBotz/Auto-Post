@@ -245,24 +245,45 @@ def _build_card(
             y += 31
     y += 28
 
-    # Buttons — DOWNLOAD (outline) + WATCH NOW (red)
+    # Buttons — vary by category
     btn_font = _font(22)
     btn_h    = 50
 
-    dl_label = "DOWNLOAD"
-    dl_w     = int(draw.textlength(dl_label, font=btn_font)) + 52
-    # Solid dark fill so button stands out on any background
-    draw.rectangle([left_x, y, left_x + dl_w, y + btn_h], fill=(20, 20, 28, 230))
-    draw.rectangle([left_x, y, left_x + dl_w, y + btn_h], outline=(255, 255, 255, 220), width=2)
-    dl_tx = left_x + (dl_w - int(draw.textlength(dl_label, font=btn_font))) // 2
-    draw.text((dl_tx, y + 14), dl_label, font=btn_font, fill=(255, 255, 255, 255))
-
-    wn_label = "WATCH NOW"
-    wn_x     = left_x + dl_w + 10   # 10px gap between buttons
-    wn_w     = int(draw.textlength(wn_label, font=btn_font)) + 52
-    draw.rectangle([wn_x, y, wn_x + wn_w, y + btn_h], fill=(210, 25, 25, 255))
-    wn_tx = wn_x + (wn_w - int(draw.textlength(wn_label, font=btn_font))) // 2
-    draw.text((wn_tx, y + 14), wn_label, font=btn_font, fill=(255, 255, 255, 255))
+    if category == "manhwa":
+        # READ NOW (red) only — no download for manhwa
+        rn_label = "READ NOW"
+        rn_w     = int(draw.textlength(rn_label, font=btn_font)) + 52
+        draw.rectangle([left_x, y, left_x + rn_w, y + btn_h], fill=(210, 25, 25, 255))
+        rn_tx = left_x + (rn_w - int(draw.textlength(rn_label, font=btn_font))) // 2
+        draw.text((rn_tx, y + 14), rn_label, font=btn_font, fill=(255, 255, 255, 255))
+    elif category == "movie":
+        # DOWNLOAD (outline) + WATCH NOW (red)
+        dl_label = "DOWNLOAD"
+        dl_w     = int(draw.textlength(dl_label, font=btn_font)) + 52
+        draw.rectangle([left_x, y, left_x + dl_w, y + btn_h], fill=(20, 20, 28, 230))
+        draw.rectangle([left_x, y, left_x + dl_w, y + btn_h], outline=(255, 255, 255, 220), width=2)
+        dl_tx = left_x + (dl_w - int(draw.textlength(dl_label, font=btn_font))) // 2
+        draw.text((dl_tx, y + 14), dl_label, font=btn_font, fill=(255, 255, 255, 255))
+        wn_label = "WATCH NOW"
+        wn_x     = left_x + dl_w + 10
+        wn_w     = int(draw.textlength(wn_label, font=btn_font)) + 52
+        draw.rectangle([wn_x, y, wn_x + wn_w, y + btn_h], fill=(210, 25, 25, 255))
+        wn_tx = wn_x + (wn_w - int(draw.textlength(wn_label, font=btn_font))) // 2
+        draw.text((wn_tx, y + 14), wn_label, font=btn_font, fill=(255, 255, 255, 255))
+    else:
+        # anime / tvshow — DOWNLOAD (outline) + WATCH NOW (red)
+        dl_label = "DOWNLOAD"
+        dl_w     = int(draw.textlength(dl_label, font=btn_font)) + 52
+        draw.rectangle([left_x, y, left_x + dl_w, y + btn_h], fill=(20, 20, 28, 230))
+        draw.rectangle([left_x, y, left_x + dl_w, y + btn_h], outline=(255, 255, 255, 220), width=2)
+        dl_tx = left_x + (dl_w - int(draw.textlength(dl_label, font=btn_font))) // 2
+        draw.text((dl_tx, y + 14), dl_label, font=btn_font, fill=(255, 255, 255, 255))
+        wn_label = "WATCH NOW"
+        wn_x     = left_x + dl_w + 10
+        wn_w     = int(draw.textlength(wn_label, font=btn_font)) + 52
+        draw.rectangle([wn_x, y, wn_x + wn_w, y + btn_h], fill=(210, 25, 25, 255))
+        wn_tx = wn_x + (wn_w - int(draw.textlength(wn_label, font=btn_font))) // 2
+        draw.text((wn_tx, y + 14), wn_label, font=btn_font, fill=(255, 255, 255, 255))
 
     # Episode info card — bottom right
     card_w, card_h = 360, 128
@@ -283,15 +304,34 @@ def _build_card(
         ImageDraw.Draw(th_mask).rounded_rectangle([0, 0, thumb_w, thumb_h], radius=6, fill=255)
         card.paste(th_img, (thumb_x, thumb_y), th_mask)
 
-    ep_str = episodes.zfill(2) if episodes not in ("?", "N/A", "None", "") else "01"
-    cd.text((16, 14), f"Episode - {ep_str}", font=_font(28), fill=(255, 255, 255, 255))
+    # Episode: use current_episode if available, else fallback to "01"
+    # Never show total episodes count here
+    cur_ep  = meta.get("current_episode") or meta.get("episode")
+    if cur_ep and str(cur_ep) not in ("?", "N/A", "None", ""):
+        ep_str = str(cur_ep).zfill(2)
+    else:
+        ep_str = "01"
 
-    if seasons and seasons not in ("N/A", "None", ""):
-        cd.text((16, 52), f"Season - {seasons.zfill(2)}", font=_font(22, bold=False), fill=(190, 190, 200, 220))
+    # Card label varies by category
+    if category == "manhwa":
+        ep_label = f"Chapter - {ep_str}"
+    elif category == "movie":
+        ep_label = None   # movies don't show episode
+    else:
+        ep_label = f"Episode - {ep_str}"
+
+    text_y = 14
+    if ep_label:
+        cd.text((16, text_y), ep_label, font=_font(28), fill=(255, 255, 255, 255))
+        text_y += 38
+
+    if seasons and seasons not in ("N/A", "None", "") and category not in ("movie", "manhwa"):
+        cd.text((16, text_y), f"Season - {seasons.zfill(2)}", font=_font(22, bold=False), fill=(190, 190, 200, 220))
+        text_y += 30
 
     rt_text = runtime if runtime and runtime not in ("N/A", "") else ("23m" if category == "anime" else "")
     if rt_text:
-        cd.text((16, 82), f"Duration - {rt_text}", font=_font(22, bold=False), fill=(190, 190, 200, 220))
+        cd.text((16, text_y), f"Duration - {rt_text}", font=_font(22, bold=False), fill=(190, 190, 200, 220))
 
     canvas.paste(card, (card_x, card_y), card)
 
