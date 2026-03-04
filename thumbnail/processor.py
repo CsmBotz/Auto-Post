@@ -304,13 +304,23 @@ def _build_card(
         ImageDraw.Draw(th_mask).rounded_rectangle([0, 0, thumb_w, thumb_h], radius=6, fill=255)
         card.paste(th_img, (thumb_x, thumb_y), th_mask)
 
-    # Episode: use current_episode if available, else fallback to "01"
-    # Never show total episodes count here
+    # Episode display — smart handling for ongoing vs completed series
     cur_ep  = meta.get("current_episode") or meta.get("episode")
-    if cur_ep and str(cur_ep) not in ("?", "N/A", "None", ""):
-        ep_str = str(cur_ep).zfill(2)
+    status  = str(meta.get("status", "")).lower()
+    total   = str(meta.get("episodes", ""))
+    ongoing = status in ("ongoing", "airing", "currently airing", "returning series", "in production")
+
+    if cur_ep and str(cur_ep) not in ("?", "N/A", "None", "0", ""):
+        ep_num = str(cur_ep).zfill(2)
+        ep_str = f"{ep_num}+" if ongoing else ep_num
+    elif ongoing:
+        # Ongoing but no current episode known
+        ep_str = "N/A"
+    elif total and total not in ("?", "N/A", "None", "0", ""):
+        # Completed — show total as the episode count
+        ep_str = str(total).zfill(2)
     else:
-        ep_str = "01"
+        ep_str = "N/A"
 
     # Card label varies by category
     if category == "manhwa":
