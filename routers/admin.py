@@ -473,8 +473,9 @@ async def adm_callback(cb: CallbackQuery):
 
     elif data == "adm_log_text":
         raw  = _log_buffer.get_text()
-        # Telegram message limit is 4096 chars — send last chunk
-        tail = raw[-3800:] if len(raw) > 3800 else raw
+        # Escape < and > so Telegram HTML parser never chokes on tracebacks
+        safe = raw.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        tail = safe[-3800:] if len(safe) > 3800 else safe
         await cb.message.answer(
             f"📋 <b>Recent Logs</b>\n\n<pre>{tail}</pre>",
             reply_markup=log_kb(),
