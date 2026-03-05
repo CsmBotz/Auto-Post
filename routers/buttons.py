@@ -8,6 +8,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from database.db import CosmicBotz
+from formatter.engine import sc
 from utils.fsm import fsm
 
 router = Router()
@@ -21,18 +22,18 @@ def _layout_text(buttons: list) -> str:
         rows.setdefault(btn.get("row", 0), []).append(btn["text"])
     return (
         "\n".join(
-            f"  Row {r+1}: " + "  |  ".join(rows[r])
+            f"  {sc('Row')} {r+1}: " + "  |  ".join(rows[r])
             for r in sorted(rows.keys())
         )
-        or "  <i>Empty</i>"
+        or f"  <i>{sc('Empty')}</i>"
     )
 
 
 def _set_preview_text(name: str, buttons: list) -> str:
     return (
-        f"✏️ <b>Editing: {name}</b>\n\n"
-        f"<b>Layout:</b>\n{_layout_text(buttons)}\n\n"
-        "Add buttons or save when done."
+        f"✏️ <b>{sc('Editing:')} {name}</b>\n\n"
+        f"<b>{sc('Layout:')}</b>\n{_layout_text(buttons)}\n\n"
+        f"{sc('Add buttons or save when done.')}"
     )
 
 
@@ -58,19 +59,22 @@ async def show_button_sets(user_id: int, target):
 
     if not sets:
         text = (
-            "🔗 <b>Button Sets</b>\n\n"
-            "No saved button sets yet.\n\n"
-            "Button sets let you save button layouts and reuse them on every post — "
-            "just like caption templates.\n\n"
-            "Use /newbtnset to create one."
+            f"🔗 <b>{sc('Button Sets')}</b>\n\n"
+            f"{sc('No saved button sets yet.')}\n\n"
+            f"{sc('Button sets let you save button layouts and reuse them on every post —')}\n"
+            f"{sc('just like caption templates.')}\n\n"
+            f"{sc('Use /newbtnset to create one.')}"
         )
         kb.button(text="➕ Create Button Set", callback_data="bset_new")
     else:
-        text = f"🔗 <b>Button Sets</b>  (active: <code>{active or 'none'}</code>)\n\n"
+        text = (
+            f"🔗 <b>{sc('Button Sets')}</b>  "
+            f"({sc('active:')} <code>{active or sc('none')}</code>)\n\n"
+        )
         for i, bs in enumerate(sets):
             mark  = "✅" if bs["name"] == active else "🔗"
             count = len(bs.get("buttons", []))
-            text += f"{mark} <code>{bs['name']}</code>  <i>({count} buttons)</i>\n"
+            text += f"{mark} <code>{bs['name']}</code>  <i>({count} {sc('buttons')})</i>\n"
             kb.button(text="👁 View",   callback_data=f"bset_v:{i}")
             kb.button(text="✅ Use",    callback_data=f"bset_u:{i}")
             kb.button(text="🗑 Delete", callback_data=f"bset_d:{i}")
@@ -97,10 +101,10 @@ async def cmd_button_sets(message: Message):
 async def cmd_new_btn_set(message: Message):
     await fsm.set(message.from_user.id, {"step": "bset_name"})
     await message.answer(
-        "🔗 <b>Create Button Set</b>\n\n"
-        "First, send a <b>name</b> for this set.\n"
-        "Example: <code>WatchLinks</code>  <code>MyChannel</code>  <code>Streaming</code>\n\n"
-        "<i>No spaces, max 32 chars.</i>"
+        f"🔗 <b>{sc('Create Button Set')}</b>\n\n"
+        f"{sc('First, send a')} <b>{sc('name')}</b> {sc('for this set.')}\n"
+        f"{sc('Example:')} <code>WatchLinks</code>  <code>MyChannel</code>  <code>Streaming</code>\n\n"
+        f"<i>{sc('No spaces, max 32 chars.')}</i>"
     )
 
 
@@ -116,10 +120,13 @@ async def bset_callback(cb: CallbackQuery):
 
     if data == "bset_new":
         await fsm.set(uid, {"step": "bset_name"})
-        await cb.message.edit_text(
-            "🔗 <b>Create Button Set</b>\n\n"
-            "Send a <b>name</b> for this set (no spaces, max 32 chars):"
-        )
+        try:
+            await cb.message.edit_text(
+                f"🔗 <b>{sc('Create Button Set')}</b>\n\n"
+                f"{sc('Send a')} <b>{sc('name')}</b> {sc('for this set (no spaces, max 32 chars):')}"
+            )
+        except Exception:
+            pass
         return
 
     if data == "bset_back":
@@ -131,11 +138,14 @@ async def bset_callback(cb: CallbackQuery):
         if not state:
             return
         await fsm.update(uid, {"step": "bset_btn_name"})
-        await cb.message.edit_text(
-            "🏷 <b>Button Label</b>\n\n"
-            "Send the button text:\n\n"
-            "▶️ Watch Now\n📥 Download\n🔔 Join Channel\n📖 Read Online"
-        )
+        try:
+            await cb.message.edit_text(
+                f"🏷 <b>{sc('Button Label')}</b>\n\n"
+                f"{sc('Send the button text:')}\n\n"
+                "▶️ Watch Now\n📥 Download\n🔔 Join Channel\n📖 Read Online"
+            )
+        except Exception:
+            pass
         return
 
     if data == "bset_save":
@@ -146,7 +156,7 @@ async def bset_callback(cb: CallbackQuery):
         btns  = state.get("bset_buttons", [])
         await CosmicBotz.save_button_set(uid, name, btns)
         await fsm.clear(uid)
-        await cb.answer(f"✅ '{name}' saved!", show_alert=True)
+        await cb.answer(f"✅ '{name}' {sc('saved!')}", show_alert=True)
         await show_button_sets(uid, cb.message)
         return
 
@@ -184,12 +194,15 @@ async def bset_callback(cb: CallbackQuery):
         kb.button(text="💾 Save Set",           callback_data="bset_save")
         kb.button(text=f"🗑 Remove Last",       callback_data=f"bset_rmbtn:{len(btns)-1}")
         kb.adjust(1)
-        await cb.message.edit_text(
-            f"✅ <b>Button added!</b>\n\n"
-            f"<b>{name} — Layout:</b>\n{_layout_text(btns)}\n\n"
-            "Add more or save?",
-            reply_markup=kb.as_markup(),
-        )
+        try:
+            await cb.message.edit_text(
+                f"✅ <b>{sc('Button added!')}</b>\n\n"
+                f"<b>{name} — {sc('Layout:')}</b>\n{_layout_text(btns)}\n\n"
+                f"{sc('Add more or save?')}",
+                reply_markup=kb.as_markup(),
+            )
+        except Exception:
+            pass
         return
 
     # bset_rmbtn — remove button during editing
@@ -201,18 +214,21 @@ async def bset_callback(cb: CallbackQuery):
         if 0 <= idx < len(btns):
             removed = btns.pop(idx)
             await fsm.update(uid, {"bset_buttons": btns})
-            await cb.answer(f"🗑 Removed: {removed['text']}")
+            await cb.answer(f"🗑 {sc('Removed:')} {removed['text']}")
         name = state.get("bset_name", "")
-        await cb.message.edit_text(
-            _set_preview_text(name, btns),
-            reply_markup=_edit_set_kb(name, btns),
-        )
+        try:
+            await cb.message.edit_text(
+                _set_preview_text(name, btns),
+                reply_markup=_edit_set_kb(name, btns),
+            )
+        except Exception:
+            pass
         return
 
     # Remaining actions need the sets list
     sets = await CosmicBotz.list_button_sets(uid)
     if idx >= len(sets):
-        await cb.answer("Not found — list changed.", show_alert=True)
+        await cb.answer(sc("Not found — list changed."), show_alert=True)
         await show_button_sets(uid, cb.message)
         return
 
@@ -227,16 +243,19 @@ async def bset_callback(cb: CallbackQuery):
         kb.button(text="🗑 Delete",   callback_data=f"bset_d:{idx}")
         kb.button(text="🔙 Back",     callback_data="bset_back")
         kb.adjust(2, 2)
-        await cb.message.edit_text(
-            f"🔗 <b>{name}</b>\n\n"
-            f"<b>Layout:</b>\n{_layout_text(btns)}\n\n"
-            f"<b>Total:</b> {len(btns)} button(s)",
-            reply_markup=kb.as_markup(),
-        )
+        try:
+            await cb.message.edit_text(
+                f"🔗 <b>{name}</b>\n\n"
+                f"<b>{sc('Layout:')}</b>\n{_layout_text(btns)}\n\n"
+                f"<b>{sc('Total:')}</b> {len(btns)} {sc('button(s)')}",
+                reply_markup=kb.as_markup(),
+            )
+        except Exception:
+            pass
 
     elif action == "bset_u":
         await CosmicBotz.update_user_settings(uid, {"active_btn_set": name})
-        await cb.answer(f"✅ '{name}' is now active!", show_alert=True)
+        await cb.answer(f"✅ '{name}' {sc('is now active!')}", show_alert=True)
         await show_button_sets(uid, cb.message)
 
     elif action == "bset_d":
@@ -244,7 +263,7 @@ async def bset_callback(cb: CallbackQuery):
         s = await CosmicBotz.get_user_settings(uid)
         if s.get("active_btn_set") == name:
             await CosmicBotz.update_user_settings(uid, {"active_btn_set": ""})
-        await cb.answer(f"🗑 '{name}' deleted.", show_alert=True)
+        await cb.answer(f"🗑 '{name}' {sc('deleted.')}", show_alert=True)
         await show_button_sets(uid, cb.message)
 
     elif action == "bset_e":
@@ -253,7 +272,10 @@ async def bset_callback(cb: CallbackQuery):
             "bset_name":    name,
             "bset_buttons": list(btns),
         })
-        await cb.message.edit_text(
-            _set_preview_text(name, btns),
-            reply_markup=_edit_set_kb(name, btns),
-        )
+        try:
+            await cb.message.edit_text(
+                _set_preview_text(name, btns),
+                reply_markup=_edit_set_kb(name, btns),
+            )
+        except Exception:
+            pass
