@@ -30,6 +30,9 @@ MAX_SEARCH_RESULTS    = int(os.getenv("MAX_SEARCH_RESULTS", "5"))
 # Server
 PORT = int(os.getenv("PORT", "8080"))
 
+# Render Deploy 
+RENDER_DEPLOY_HOOK = os.getenv("RENDER_DEPLOY_HOOK", "")
+
 # Defaults
 DEFAULT_QUALITY = "480p | 720p | 1080p"
 DEFAULT_AUDIO   = "Hindi | English"
