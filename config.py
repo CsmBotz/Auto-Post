@@ -33,10 +33,6 @@ PORT = int(os.getenv("PORT", "8080"))
 # Render Deploy 
 RENDER_DEPLOY_HOOK = os.getenv("RENDER_DEPLOY_HOOK", "")
 RENDER_API_KEY    = os.getenv("RENDER_API_KEY", "")
-RENDER_SERVICE_ID = os.getenv("RENDER_SERVICE_ID", "")
-GITHUB_REPO       = os.getenv("GITHUB_REPO", "")
-GITHUB_BRANCH     = os.getenv("GITHUB_BRANCH", "main")
-GITHUB_TOKEN      = os.getenv("GITHUB_TOKEN", "")
 
 
 # Defaults
