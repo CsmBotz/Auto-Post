@@ -328,54 +328,80 @@ async def cmd_update(message: Message):
     await _trigger_render_deploy(message)
 
 
-# ── Render deploy helper ──────────────────────────────────────────────────────
+# ── Render deploy helpers ─────────────────────────────────────────────────────
 
-async def _get_deployed_commit(service_id: str, api_key: str) -> str | None:
-    """Fetch the commit SHA of the currently live Render deploy."""
-    url     = f"https://api.render.com/v1/services/{service_id}/deploys?limit=1"
+import re as _re
+
+
+def _parse_service_id(hook_url: str) -> str:
+    """Extract  srv-xxxx  from the deploy hook URL — no config needed."""
+    m = _re.search(r"(srv-[a-z0-9]+)", hook_url)
+    return m.group(1) if m else ""
+
+
+async def _render_api_get(path: str, api_key: str):
+    """Generic authenticated GET against the Render v1 API."""
     headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                if r.status != 200:
-                    return None
-                data = await r.json()
-                # data is a list of deploy objects
-                if data and isinstance(data, list):
-                    commit = data[0].get("deploy", {}).get("commit", {})
-                    return commit.get("id")  # full SHA
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"https://api.render.com/v1{path}",
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                return await r.json() if r.status == 200 else None
     except Exception:
         return None
 
 
-async def _get_latest_github_commit(repo: str, branch: str, token: str = "") -> str | None:
-    """Fetch the latest commit SHA from GitHub for repo/branch."""
-    url     = f"https://api.github.com/repos/{repo}/commits/{branch}"
-    headers = {"Accept": "application/vnd.github+json"}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
+async def _fetch_render_info(service_id: str, api_key: str) -> tuple[str, str, str]:
+    """
+    Returns (deployed_sha, github_repo, branch) using only the Render API.
+    github_repo is  owner/repo  — parsed from the repo URL Render stores.
+    """
+    deployed_sha = branch = gh_repo = ""
+
+    # 1. Latest deploy → gives currently deployed commit SHA
+    deploys = await _render_api_get(f"/services/{service_id}/deploys?limit=1", api_key)
+    if deploys and isinstance(deploys, list):
+        deployed_sha = deploys[0].get("deploy", {}).get("commit", {}).get("id", "")
+
+    # 2. Service details → gives connected repo URL + branch
+    svc = await _render_api_get(f"/services/{service_id}", api_key)
+    if svc:
+        details = svc.get("service", {}).get("serviceDetails", {})
+        branch  = details.get("branch", "main")
+        raw_url = details.get("repo", "")
+        # https://github.com/owner/repo  or  git@github.com:owner/repo.git
+        m = _re.search(r"github\.com[/:](.+?)(?:\.git)?$", raw_url)
+        if m:
+            gh_repo = m.group(1)
+
+    return deployed_sha, gh_repo, branch
+
+
+async def _latest_github_sha(repo: str, branch: str) -> str:
+    """Latest commit SHA from GitHub — no token needed for public repos."""
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as r:
-                if r.status != 200:
-                    return None
-                data = await r.json()
-                return data.get("sha")
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"https://api.github.com/repos/{repo}/commits/{branch}",
+                headers={"Accept": "application/vnd.github+json"},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                data = await r.json() if r.status == 200 else {}
+                return data.get("sha", "")
     except Exception:
-        return None
+        return ""
 
 
 async def _trigger_render_deploy(target: Message):
     """
-    Check if a new commit exists on GitHub vs the live Render deploy.
-    If up-to-date, skip. If new commit found, trigger the deploy hook.
+    Auto-detects service ID, repo and branch entirely from Render API.
+    Only needs RENDER_DEPLOY_HOOK + RENDER_API_KEY — nothing else.
     """
-    hook       = getattr(cfg, "RENDER_DEPLOY_HOOK",   "")
-    api_key    = getattr(cfg, "RENDER_API_KEY",        "")
-    service_id = getattr(cfg, "RENDER_SERVICE_ID",     "")
-    gh_repo    = getattr(cfg, "GITHUB_REPO",           "")   # e.g. "username/reponame"
-    gh_branch  = getattr(cfg, "GITHUB_BRANCH",        "main")
-    gh_token   = getattr(cfg, "GITHUB_TOKEN",          "")   # optional, avoids rate limits
+    hook    = getattr(cfg, "RENDER_DEPLOY_HOOK", "")
+    api_key = getattr(cfg, "RENDER_API_KEY",     "")
 
     if not hook:
         await target.answer(
@@ -386,34 +412,29 @@ async def _trigger_render_deploy(target: Message):
 
     msg = await target.answer("🔍 <b>Checking for new commits...</b>")
 
-    # ── Commit comparison (only if all credentials are configured) ────────────
-    if api_key and service_id and gh_repo:
-        deployed_sha, latest_sha = await asyncio.gather(
-            _get_deployed_commit(service_id, api_key),
-            _get_latest_github_commit(gh_repo, gh_branch, gh_token),
-        )
+    # ── Commit comparison ─────────────────────────────────────────────────────
+    if api_key:
+        service_id = _parse_service_id(hook)
+        deployed_sha, gh_repo, branch = await _fetch_render_info(service_id, api_key)
+        latest_sha = await _latest_github_sha(gh_repo, branch) if gh_repo else ""
 
         if deployed_sha and latest_sha:
-            short_deployed = deployed_sha[:7]
-            short_latest   = latest_sha[:7]
-
             if deployed_sha == latest_sha:
                 await msg.edit_text(
                     f"✅ <b>Already up to date!</b>\n\n"
-                    f"🔖 Current deploy: <code>{short_deployed}</code>\n"
-                    f"🌿 Branch <code>{gh_branch}</code> is at the same commit.\n\n"
+                    f"🔖 Deployed: <code>{deployed_sha[:7]}</code>\n"
+                    f"🌿 Branch:   <code>{branch}</code>\n\n"
                     "<i>No redeploy needed.</i>"
                 )
                 return
 
             await msg.edit_text(
                 f"🆕 <b>New commit found!</b>\n\n"
-                f"🔖 Deployed: <code>{short_deployed}</code>\n"
-                f"🚀 Latest:   <code>{short_latest}</code>\n\n"
-                f"⏳ Triggering deploy..."
+                f"🔖 Deployed: <code>{deployed_sha[:7]}</code>\n"
+                f"🚀 Latest:   <code>{latest_sha[:7]}</code>\n\n"
+                "⏳ Triggering deploy..."
             )
         else:
-            # Couldn't fetch SHAs — proceed anyway with a warning
             await msg.edit_text("⚠️ <b>Could not compare commits.</b> Triggering deploy anyway...")
     else:
         await msg.edit_text("🔄 <b>Triggering deploy on Render...</b>")
