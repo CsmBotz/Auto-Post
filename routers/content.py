@@ -278,8 +278,31 @@ async def cb_select(cb: CallbackQuery):
 async def cb_skip_thumb(cb: CallbackQuery):
     await cb.answer()
     await fsm.update(cb.from_user.id, {"step": "preview", "custom_image": None})
-    await cb.message.edit_text(f"⏳ {sc('building preview...')}")
-    await _show_preview(cb)
+    # Delete the current message first, then show preview (avoids edit conflicts)
+    try:
+        await cb.message.delete()
+    except Exception:
+        pass
+    # Send a temporary "building" message, then replace with preview
+    wait = await cb.bot.send_message(
+        chat_id=cb.message.chat.id,
+        text=f"⏳ {sc('building preview...')}",
+    )
+    result = await _build_preview_data(cb.from_user.id, bot=cb.bot)
+    if not result:
+        await wait.edit_text(_t("❌ session expired. start again."))
+        return
+    caption, thumb, prefix = result
+    try:
+        await wait.delete()
+    except Exception:
+        pass
+    await cb.bot.send_photo(
+        chat_id=cb.message.chat.id,
+        photo=BufferedInputFile(thumb, filename="thumb.jpg"),
+        caption=caption,
+        reply_markup=preview_kb(prefix),
+    )
 
 
 @router.message(F.photo)
@@ -411,24 +434,26 @@ async def cb_redo_thumb(cb: CallbackQuery):
     if not state:
         await cb.answer(sc("❌ session expired."), show_alert=True)
         return
-    await fsm.update(cb.from_user.id, {"step": "thumbnail"})
+    await fsm.update(cb.from_user.id, {"step": "thumbnail", "custom_image": None})
     prefix = CAT_TO_PREFIX[state.get("category", "movie")]
     kb     = thumbnail_kb(prefix)
+    prompt = f"📸 {sc('send a new thumbnail or tap skip:')}"
+    # Try editing caption (photo message), else edit text, else send fresh message
     try:
-        await cb.message.edit_caption(
-            caption=f"📸 {sc('send a new thumbnail or tap skip:')}",
-            reply_markup=kb,
-        )
+        await cb.message.edit_caption(caption=prompt, reply_markup=kb)
     except Exception:
         try:
-            await cb.message.delete()
+            await cb.message.edit_text(prompt, reply_markup=kb)
         except Exception:
-            pass
-        await cb.bot.send_message(
-            chat_id=cb.message.chat.id,
-            text=f"📸 {sc('send a new thumbnail or tap skip:')}",
-            reply_markup=kb,
-        )
+            try:
+                await cb.message.delete()
+            except Exception:
+                pass
+            await cb.bot.send_message(
+                chat_id=cb.message.chat.id,
+                text=prompt,
+                reply_markup=kb,
+            )
 
 
 @router.callback_query(F.data.regexp(r"^(movie|tv|anime|manhwa)_cancel$"))
@@ -483,7 +508,10 @@ async def cb_btn_add(cb: CallbackQuery):
     try:
         await cb.message.edit_caption(caption=prompt, reply_markup=None)
     except Exception:
-        await cb.message.edit_text(prompt, reply_markup=None)
+        try:
+            await cb.message.edit_text(prompt, reply_markup=None)
+        except Exception:
+            pass
 
 
 @router.callback_query(F.data.regexp(r"^(movie|tv|anime|manhwa)_btn_del_(\d+)$"))
@@ -672,10 +700,19 @@ async def cb_btn_position(cb: CallbackQuery):
         "pending_btn_name": None,
         "pending_btn_url":  None,
     })
-    await cb.message.edit_text(
-        _btn_manager_text(buttons),
-        reply_markup=button_manage_kb(prefix, buttons),
-    )
+    try:
+        await cb.message.edit_caption(
+            caption=_btn_manager_text(buttons),
+            reply_markup=button_manage_kb(prefix, buttons),
+        )
+    except Exception:
+        try:
+            await cb.message.edit_text(
+                _btn_manager_text(buttons),
+                reply_markup=button_manage_kb(prefix, buttons),
+            )
+        except Exception:
+            pass
 
 
 @router.callback_query(F.data.regexp(r"^(movie|tv|anime|manhwa)_btn_done$"))
