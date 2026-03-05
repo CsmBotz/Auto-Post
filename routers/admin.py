@@ -15,6 +15,21 @@ import config as cfg
 logger = logging.getLogger(__name__)
 router = Router()
 
+# Tracks when the bot process started — used for uptime display
+BOT_START_TIME: datetime = datetime.utcnow()
+
+
+def _fmt_uptime() -> str:
+    """Format uptime as  Xd HH:MM:SS  or  HH:MM:SS  if under 1 day."""
+    delta    = datetime.utcnow() - BOT_START_TIME
+    total_s  = int(delta.total_seconds())
+    days, rem  = divmod(total_s, 86400)
+    hours, rem = divmod(rem, 3600)
+    mins, secs = divmod(rem, 60)
+    if days:
+        return f"{days}d {hours:02}:{mins:02}:{secs:02}"
+    return f"{hours:02}:{mins:02}:{secs:02}"
+
 
 # ── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -315,17 +330,95 @@ async def cmd_update(message: Message):
 
 # ── Render deploy helper ──────────────────────────────────────────────────────
 
+async def _get_deployed_commit(service_id: str, api_key: str) -> str | None:
+    """Fetch the commit SHA of the currently live Render deploy."""
+    url     = f"https://api.render.com/v1/services/{service_id}/deploys?limit=1"
+    headers = {"Authorization": f"Bearer {api_key}", "Accept": "application/json"}
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                if r.status != 200:
+                    return None
+                data = await r.json()
+                # data is a list of deploy objects
+                if data and isinstance(data, list):
+                    commit = data[0].get("deploy", {}).get("commit", {})
+                    return commit.get("id")  # full SHA
+    except Exception:
+        return None
+
+
+async def _get_latest_github_commit(repo: str, branch: str, token: str = "") -> str | None:
+    """Fetch the latest commit SHA from GitHub for repo/branch."""
+    url     = f"https://api.github.com/repos/{repo}/commits/{branch}"
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)) as r:
+                if r.status != 200:
+                    return None
+                data = await r.json()
+                return data.get("sha")
+    except Exception:
+        return None
+
+
 async def _trigger_render_deploy(target: Message):
-    """POST to Render deploy hook and report result to target message."""
-    hook = getattr(cfg, "RENDER_DEPLOY_HOOK", "")
+    """
+    Check if a new commit exists on GitHub vs the live Render deploy.
+    If up-to-date, skip. If new commit found, trigger the deploy hook.
+    """
+    hook       = getattr(cfg, "RENDER_DEPLOY_HOOK",   "")
+    api_key    = getattr(cfg, "RENDER_API_KEY",        "")
+    service_id = getattr(cfg, "RENDER_SERVICE_ID",     "")
+    gh_repo    = getattr(cfg, "GITHUB_REPO",           "")   # e.g. "username/reponame"
+    gh_branch  = getattr(cfg, "GITHUB_BRANCH",        "main")
+    gh_token   = getattr(cfg, "GITHUB_TOKEN",          "")   # optional, avoids rate limits
+
     if not hook:
         await target.answer(
             "❌ <b>RENDER_DEPLOY_HOOK</b> is not set.\n\n"
-            "Add it to your <code>.env</code> and <code>config.py</code>:\n"
-            "<code>RENDER_DEPLOY_HOOK=https://api.render.com/deploy/srv-xxx?key=yyy</code>"
+            "Add it to your <code>.env</code> and <code>config.py</code>."
         )
         return
-    msg = await target.answer("🔄 <b>Triggering deploy on Render...</b>")
+
+    msg = await target.answer("🔍 <b>Checking for new commits...</b>")
+
+    # ── Commit comparison (only if all credentials are configured) ────────────
+    if api_key and service_id and gh_repo:
+        deployed_sha, latest_sha = await asyncio.gather(
+            _get_deployed_commit(service_id, api_key),
+            _get_latest_github_commit(gh_repo, gh_branch, gh_token),
+        )
+
+        if deployed_sha and latest_sha:
+            short_deployed = deployed_sha[:7]
+            short_latest   = latest_sha[:7]
+
+            if deployed_sha == latest_sha:
+                await msg.edit_text(
+                    f"✅ <b>Already up to date!</b>\n\n"
+                    f"🔖 Current deploy: <code>{short_deployed}</code>\n"
+                    f"🌿 Branch <code>{gh_branch}</code> is at the same commit.\n\n"
+                    "<i>No redeploy needed.</i>"
+                )
+                return
+
+            await msg.edit_text(
+                f"🆕 <b>New commit found!</b>\n\n"
+                f"🔖 Deployed: <code>{short_deployed}</code>\n"
+                f"🚀 Latest:   <code>{short_latest}</code>\n\n"
+                f"⏳ Triggering deploy..."
+            )
+        else:
+            # Couldn't fetch SHAs — proceed anyway with a warning
+            await msg.edit_text("⚠️ <b>Could not compare commits.</b> Triggering deploy anyway...")
+    else:
+        await msg.edit_text("🔄 <b>Triggering deploy on Render...</b>")
+
+    # ── Fire the deploy hook ──────────────────────────────────────────────────
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(hook, timeout=aiohttp.ClientTimeout(total=10)) as resp:
@@ -348,12 +441,11 @@ async def _trigger_render_deploy(target: Message):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 async def _send_stats(target: Message):
-    tu   = await CosmicBotz.total_users()
-    tp   = await CosmicBotz.total_posts()
-    mode = await CosmicBotz.get_bot_mode()
-    pu   = await CosmicBotz.total_premium_users()
-    bu   = await CosmicBotz.total_banned_users()
-    # Active today
+    tu     = await CosmicBotz.total_users()
+    tp     = await CosmicBotz.total_posts()
+    mode   = await CosmicBotz.get_bot_mode()
+    pu     = await CosmicBotz.total_premium_users()
+    bu     = await CosmicBotz.total_banned_users()
     active = await CosmicBotz.active_users_today()
     text = (
         f"📊 <b>Global Stats</b>\n\n"
@@ -362,7 +454,8 @@ async def _send_stats(target: Message):
         f"⭐ Premium:       <b>{pu}</b>\n"
         f"⛔ Banned:        <b>{bu}</b>\n"
         f"📤 Total Posts:   <b>{tp}</b>\n"
-        f"🌐 Bot Mode:      <code>{mode}</code>"
+        f"🌐 Bot Mode:      <code>{mode}</code>\n"
+        f"⏱ Uptime:        <code>{_fmt_uptime()}</code>"
     )
     if isinstance(target, Message):
         await target.answer(text, reply_markup=admin_kb())
@@ -467,7 +560,8 @@ async def adm_callback(cb: CallbackQuery):
             f"⭐ Premium:       <b>{pu}</b>\n"
             f"⛔ Banned:        <b>{bu}</b>\n"
             f"📤 Total Posts:   <b>{tp}</b>\n"
-            f"🌐 Bot Mode:      <code>{mode}</code>",
+            f"🌐 Bot Mode:      <code>{mode}</code>\n"
+            f"⏱ Uptime:        <code>{_fmt_uptime()}</code>",
             reply_markup=admin_kb(),
         )
 
