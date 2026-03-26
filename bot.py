@@ -9,18 +9,18 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 # ─────────────────────────────────────────────
-# Fix working directory (important for Render)
+# Fix working directory
 # ─────────────────────────────────────────────
 _ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _ROOT)
 os.chdir(_ROOT)
 
 # ─────────────────────────────────────────────
-# Config & Routers
+# Config & Utils
 # ─────────────────────────────────────────────
 from config import BOT_TOKEN, ADMIN_IDS
 from routers import get_all_routers
-from utils.font_loader import ensure_fonts  # ✅ moved here (correct)
+from utils.font_loader import ensure_fonts
 
 PORT = int(os.environ.get("PORT", 8080))
 
@@ -46,21 +46,26 @@ bot = Bot(
 
 dp = Dispatcher()
 
-# Load all routers
-all_routers = get_all_routers()
-for router in all_routers:
+for router in get_all_routers():
     dp.include_router(router)
 
-LOGGER.info(f"✅ Loaded {len(all_routers)} routers")
+LOGGER.info("✅ Routers loaded")
 
 # ─────────────────────────────────────────────
 # Startup
 # ─────────────────────────────────────────────
 async def on_startup(bot: Bot):
-    LOGGER.info("🚀 Bot Started in PLNG mode")
+    LOGGER.info("🚀 Bot Starting in POLLING mode")
 
-    # Remove webhook (important when switching to polling)
-    await bot.delete_webhook(drop_pending_updates=True)
+    # Clean webhook (safe)
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        await asyncio.sleep(1)
+    except Exception as e:
+        LOGGER.warning(f"Webhook cleanup failed: {e}")
+
+    # Delay to avoid duplicate instance overlap
+    await asyncio.sleep(5)
 
     # Notify admins
     for admin_id in ADMIN_IDS:
@@ -70,8 +75,7 @@ async def on_startup(bot: Bot):
                 text="<b><blockquote>🤖 CosmicBotz Started (Polling) ✅</blockquote></b>",
             )
         except Exception as e:
-            LOGGER.warning(f"Could not notify admin {admin_id}: {e}")
-
+            LOGGER.warning(f"Admin notify failed: {e}")
 
 # ─────────────────────────────────────────────
 # Shutdown
@@ -79,11 +83,9 @@ async def on_startup(bot: Bot):
 async def on_shutdown(bot: Bot):
     LOGGER.info("⛔ Shutting down...")
     await bot.session.close()
-    LOGGER.info("✅ Bot session closed.")
-
 
 # ─────────────────────────────────────────────
-# Web Server (for Render uptime)
+# Dummy Web Server (Render uptime)
 # ─────────────────────────────────────────────
 async def start_web_server():
     app = web.Application()
@@ -100,31 +102,32 @@ async def start_web_server():
 
     LOGGER.info(f"🌐 Server running on port {PORT}")
 
-
 # ─────────────────────────────────────────────
-# Main Runner
+# Main
 # ─────────────────────────────────────────────
 async def main():
-    # ✅ Ensure fonts at runtime (correct place)
     ensure_fonts()
 
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
-    # 🔁 Auto-restart system (Render safe)
+    # Start web server first
+    await start_web_server()
+
+    # Extra safety delay (important for Render)
+    LOGGER.info("⏳ Waiting before polling start...")
+    await asyncio.sleep(10)
+
+    # Polling loop (auto-restart safe)
     while True:
         try:
-            await asyncio.gather(
-                start_web_server(),
-                dp.start_polling(bot)
-            )
+            await dp.start_polling(bot)
         except Exception as e:
-            LOGGER.error(f"❌ Bot crashed: {e}")
+            LOGGER.error(f"❌ Polling crashed: {e}")
             await asyncio.sleep(5)
 
-
 # ─────────────────────────────────────────────
-# Entry Point (FIXED)
+# Entry
 # ─────────────────────────────────────────────
 if __name__ == "__main__":
     try:
