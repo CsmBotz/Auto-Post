@@ -57,7 +57,7 @@ LOGGER.info(f"✅ Loaded {len(all_routers)} routers")
 # Startup
 # ─────────────────────────────────────────────
 async def on_startup(bot: Bot):
-    LOGGER.info("🚀 Bot Started in POLLING mode")
+    LOGGER.info("🚀 Bot Started in PLNG mode")
 
     # Remove webhook (important when switching to polling)
     await bot.delete_webhook(drop_pending_updates=True)
