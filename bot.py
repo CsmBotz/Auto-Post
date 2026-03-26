@@ -55,7 +55,7 @@ LOGGER.info("✅ Routers loaded")
 # Startup
 # ─────────────────────────────────────────────
 async def on_startup(bot: Bot):
-    LOGGER.info("🚀 Bot Starting in POLLING mode")
+    LOGGER.info("🚀 Bot Starting in PLNG mode")
 
     # Clean webhook (safe)
     try:
@@ -72,7 +72,7 @@ async def on_startup(bot: Bot):
         try:
             await bot.send_message(
                 chat_id=admin_id,
-                text="<b><blockquote>🤖 CosmicBotz Started (Polling) ✅</blockquote></b>",
+                text="<b><blockquote>🤖 CosmicBotz Started </blockquote></b>",
             )
         except Exception as e:
             LOGGER.warning(f"Admin notify failed: {e}")
@@ -85,7 +85,7 @@ async def on_shutdown(bot: Bot):
     await bot.session.close()
 
 # ─────────────────────────────────────────────
-# Dummy Web Server (Render uptime)
+# Web Server (Render uptime)
 # ─────────────────────────────────────────────
 async def start_web_server():
     app = web.Application()
@@ -115,7 +115,7 @@ async def main():
     await start_web_server()
 
     # Extra safety delay (important for Render)
-    LOGGER.info("⏳ Waiting before polling start...")
+    LOGGER.info("⏳ Waiting before  start...")
     await asyncio.sleep(10)
 
     # Polling loop (auto-restart safe)
@@ -123,7 +123,7 @@ async def main():
         try:
             await dp.start_polling(bot)
         except Exception as e:
-            LOGGER.error(f"❌ Polling crashed: {e}")
+            LOGGER.error(f"❌  crashed: {e}")
             await asyncio.sleep(5)
 
 # ─────────────────────────────────────────────
