@@ -16,16 +16,11 @@ sys.path.insert(0, _ROOT)
 os.chdir(_ROOT)
 
 # ─────────────────────────────────────────────
-# ✅ Runtime Font Loader (ADDED)
-# ─────────────────────────────────────────────
-from utils.font_loader import ensure_fonts
-ensure_fonts()
-
-# ─────────────────────────────────────────────
 # Config & Routers
 # ─────────────────────────────────────────────
 from config import BOT_TOKEN, ADMIN_IDS
 from routers import get_all_routers
+from utils.font_loader import ensure_fonts  # ✅ moved here (correct)
 
 PORT = int(os.environ.get("PORT", 8080))
 
@@ -64,7 +59,7 @@ LOGGER.info(f"✅ Loaded {len(all_routers)} routers")
 async def on_startup(bot: Bot):
     LOGGER.info("🚀 Bot Started in POLLING mode")
 
-    # ❌ Remove webhook if exists (important)
+    # Remove webhook (important when switching to polling)
     await bot.delete_webhook(drop_pending_updates=True)
 
     # Notify admins
@@ -95,7 +90,7 @@ async def start_web_server():
 
     app.router.add_get("/", lambda r: web.Response(text="CosmicBotz Running!"))
     app.router.add_get("/health", lambda r: web.Response(text="OK"))
-    app.router.add_get("/webhook", lambda r: web.Response(text="Webhook  alive"))
+    app.router.add_get("/webhook", lambda r: web.Response(text="Webhook alive"))
 
     runner = web.AppRunner(app)
     await runner.setup()
@@ -103,22 +98,36 @@ async def start_web_server():
     site = web.TCPSite(runner, "0.0.0.0", PORT)
     await site.start()
 
-    LOGGER.info(f"🌐 server running on port {PORT}")
+    LOGGER.info(f"🌐 Server running on port {PORT}")
 
 
 # ─────────────────────────────────────────────
 # Main Runner
 # ─────────────────────────────────────────────
 async def main():
+    # ✅ Ensure fonts at runtime (correct place)
+    ensure_fonts()
+
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
-    # Run both polling + web server together
-    await asyncio.gather(
-        start_web_server(),
-        dp.start_polling(bot)
-    )
+    # 🔁 Auto-restart system (Render safe)
+    while True:
+        try:
+            await asyncio.gather(
+                start_web_server(),
+                dp.start_polling(bot)
+            )
+        except Exception as e:
+            LOGGER.error(f"❌ Bot crashed: {e}")
+            await asyncio.sleep(5)
 
 
+# ─────────────────────────────────────────────
+# Entry Point (FIXED)
+# ─────────────────────────────────────────────
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        LOGGER.info("🛑 Bot stopped.")
